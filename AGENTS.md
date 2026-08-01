@@ -38,6 +38,114 @@ Do not implement one branch's pruning method in another branch. Shared fixes or
 benchmark improvements should be committed to `master` first and then merged or
 fast-forwarded into all experiment branches before experiment-specific work.
 
+## Mandatory agent self-check
+
+Every agent must run this self-check before editing files. It is not optional.
+The agent must state the result in its work update so the user can verify that it
+is operating on the correct branch and pruning direction.
+
+### 1. Pre-flight check
+
+Run:
+
+```bash
+git branch --show-current
+git status --short
+git log -1 --oneline
+```
+
+Then verify the current branch against this table:
+
+| Current branch | Work that is allowed |
+| --- | --- |
+| `master` | Shared benchmark, compatibility fixes, documentation, and infrastructure only |
+| `pruning-uniform-nm` | Uniform N:M pruning only |
+| `pruning-domino-mixed-nm` | Per-layer mixed N:M and DominoSearch cost/search improvements only |
+| `pruning-structured-channel` | Structured channel/filter pruning only |
+| `pruning-unstructured-magnitude` | Local/global magnitude pruning only |
+
+Before continuing, the agent must be able to answer all of these questions with
+`yes`:
+
+- Am I on the branch assigned to this pruning method?
+- Is the requested work inside that branch's allowed scope?
+- Have I read the relevant documentation and implementation?
+- Is the worktree clean, or have I identified and preserved every existing user
+  change that overlaps my task?
+- Do I know which dense checkpoint and benchmark form the baseline?
+- Can the new method be measured independently from other optimization methods?
+
+If any answer is `no`, stop implementation and resolve the mismatch first. Do not
+silently switch methods, discard changes, or broaden the experiment.
+
+### 2. Scope check before each material edit
+
+Before changing a file, confirm:
+
+- why the file must change for the current branch's method;
+- whether the change belongs on `master` as shared infrastructure instead;
+- whether it changes original DominoSearch behavior;
+- whether a new flag/module can preserve the original default behavior;
+- which test or benchmark will detect an incorrect implementation.
+
+If a change is useful to more than one pruning branch, implement and commit it on
+`master` first. Synchronize the experiment branches before continuing. Do not
+copy slightly different versions of shared benchmark code into each branch.
+
+### 3. Experiment validity check
+
+Before running or accepting a pruning experiment, confirm:
+
+- the dense and pruned runs use the same architecture, dataset split,
+  preprocessing, input size, device, and benchmark settings;
+- the checkpoint loads without missing or unexpected keys;
+- the pruning scheme/mask covers exactly the intended layers;
+- measured sparsity matches the requested sparsity;
+- both pre-fine-tuning and post-fine-tuning accuracy are recorded;
+- the output JSON records branch, commit, seed, checkpoint, and scheme/mask;
+- theoretical MAC/parameter reductions are not presented as hardware speedup.
+
+An experiment that fails one of these checks is a debug run, not valid evidence.
+Label it accordingly and do not include it in the final comparison table.
+
+### 4. Pre-commit check
+
+Run at minimum:
+
+```bash
+git branch --show-current
+git status --short
+git diff --check
+git diff --stat
+```
+
+Review the full diff and verify:
+
+- only the current branch's pruning direction is implemented;
+- no checkpoint, dataset, cache, log, or generated result is staged;
+- original dense behavior still works;
+- documentation and CLI help match the implementation;
+- relevant syntax checks, smoke tests, and benchmark checks pass.
+
+Do not commit if the branch name and implemented method do not match.
+
+### 5. Handoff self-audit
+
+Before reporting completion, the agent must explicitly report:
+
+- current branch and commit;
+- pruning method implemented;
+- files changed;
+- checks and benchmarks that passed;
+- dense baseline and comparable pruned result, if an experiment was run;
+- tests that could not run and the reason;
+- whether results prove theoretical reduction, host runtime improvement, or
+  target-hardware improvement.
+
+The agent must not say "optimized", "faster", or "best" unless the corresponding
+baseline evidence exists. If only code was implemented, say that the method is
+ready for evaluation, not that it has already improved the model.
+
 ## Preserve the original project
 
 - Preserve the original DominoSearch algorithm and default behavior unless the
