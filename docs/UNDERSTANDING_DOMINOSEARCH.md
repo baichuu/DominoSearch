@@ -1,5 +1,9 @@
 # Hiểu về Sparsity và dự án DominoSearch
 
+> Để đo rõ hiệu quả trước/sau tối ưu, xem code và giao thức tại
+> [`benchmark/README.md`](../benchmark/README.md). Báo cáo tách riêng accuracy,
+> độ phức tạp lý thuyết và tốc độ thực đo để tránh kết luận sai.
+
 Tài liệu này dành cho người mới tiếp cận pruning, sparse neural network và mã nguồn DominoSearch. Mục tiêu là giúp bạn hiểu:
 
 1. Dự án đang giải quyết vấn đề gì.
