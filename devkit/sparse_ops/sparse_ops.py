@@ -2,8 +2,6 @@ import torch
 from torch import autograd, nn
 import torch.nn.functional as F
 import numpy as np
-from itertools import repeat
-from torch._six import container_abcs
 from torch import linalg as LA
 
 global partition_grad_weight_penalty
@@ -199,7 +197,15 @@ class SparseConv(nn.Conv2d):
 
         weights_survival = w_b * weight_temp
         #print(weights_survival.dtype)
-        smallest_of_survival_ = torch.where(weights_survival > 0.0 ,weights_survival ,torch.tensor(float('inf'),dtype=weights_survival.dtype,device=weights_survival.get_device()))
+        smallest_of_survival_ = torch.where(
+            weights_survival > 0.0,
+            weights_survival,
+            torch.tensor(
+                float('inf'),
+                dtype=weights_survival.dtype,
+                device=weights_survival.device,
+            ),
+        )
         smallest_of_survival,inds = torch.min(smallest_of_survival_,dim = 1)
         smallest_of_survival_col = smallest_of_survival.reshape(smallest_of_survival.numel(),1)
         #assert smallest_of_survival.numel() == group
@@ -288,7 +294,7 @@ class SparseConv(nn.Conv2d):
   
     def check_num_survival_parameters(self):
 
-        if self.smallest_survival == None: # this means has not initialized, still dense
+        if self.smallest_survival is None: # this means has not initialized, still dense
             return self.dense_parameters
 
         # abs : magnitude
@@ -534,7 +540,15 @@ class SparseLinear(nn.Linear):
 
         weights_survival = w_b * weight_temp
         #print(weights_survival.dtype)
-        smallest_of_survival_ = torch.where(weights_survival > 0.0 ,weights_survival ,torch.tensor(float('inf'),dtype=weights_survival.dtype,device=weights_survival.get_device()))
+        smallest_of_survival_ = torch.where(
+            weights_survival > 0.0,
+            weights_survival,
+            torch.tensor(
+                float('inf'),
+                dtype=weights_survival.dtype,
+                device=weights_survival.device,
+            ),
+        )
         smallest_of_survival,inds = torch.min(smallest_of_survival_,dim = 1)
         smallest_of_survival_col = smallest_of_survival.reshape(smallest_of_survival.numel(),1)
         assert smallest_of_survival.numel() == group
@@ -695,7 +709,7 @@ class SparseLinear(nn.Linear):
 
     def check_num_survival_parameters(self):
 
-        if self.smallest_survival == None: # this means has not initialized, still dense
+        if self.smallest_survival is None: # this means has not initialized, still dense
             return self.dense_parameters
 
         # abs : magnitude
@@ -754,6 +768,3 @@ class SparseLinear(nn.Linear):
         w = self.get_sparse_weights()
         x = F.linear(x, w,self.bias)
         return x
-
-
-

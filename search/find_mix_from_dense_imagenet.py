@@ -1,8 +1,16 @@
 from __future__ import division
 import argparse
 import os
+import os.path as osp
+import sys
 import time
-import torch.distributed as dist
+
+# Make the repository-level devkit importable regardless of the working
+# directory used to launch this script.
+REPO_ROOT = osp.abspath(osp.join(osp.dirname(__file__), ".."))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
 import torch
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
@@ -10,35 +18,49 @@ from torch.utils.data.distributed import DistributedSampler
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 import yaml
-import sys
 import torchvision.datasets as datasets
 from tensorboardX import SummaryWriter
 import models
-import os.path as osp
 import numpy as np
 from devkit.sparse_ops import SparseConv,SparseLinear
-sys.path.append(osp.abspath(osp.join(__file__, '../')))
 
-from devkit.core import (init_dist, broadcast_params, average_gradients, load_state_ckpt, load_state, save_checkpoint, LRScheduler,get_sparsities_erdos_renyi,set_sparse_scheme,load_pre_train,get_overall_sparsity_with_NM_schemes,summary,conv_flops_counter_hook,normalize_erk_sparsity,update_erk_sparsity)
+from devkit.core import (
+    LRScheduler,
+    average_gradients,
+    broadcast_params,
+    cleanup_dist,
+    conv_flops_counter_hook,
+    get_device,
+    get_sparsities_erdos_renyi,
+    init_dist,
+    normalize_erk_sparsity,
+    reduce_tensor,
+    summary,
+    update_erk_sparsity,
+)
 
 from devkit.core import mean_var_group,get_layer_wise_dense_flops_params
 
 
-from devkit.core import get_sparsities_erdos_renyi_NM
-from devkit.dataset.imagenet_dataset import ColorAugmentation, ImagenetDataset
-import random
+from devkit.dataset.imagenet_dataset import ColorAugmentation
 # Fine mixed N:M from dense net
 
 parser = argparse.ArgumentParser(
-    description='Pytorch CIFAR Training')
+    description='Search layer-wise N:M schemes on ImageNet')
 parser.add_argument('--config', default='configs/config_resnet50_2:4.yaml')
-parser.add_argument("--local_rank", type=int)
+parser.add_argument("--local-rank", "--local_rank", dest="local_rank", type=int)
 parser.add_argument(
     '--port', default=29500, type=int, help='port of server')
 parser.add_argument('--world-size', default=1, type=int)
 parser.add_argument('--rank', default=0, type=int)
 parser.add_argument('--target_sparsity', default=0.0, type=float)
 parser.add_argument('--model_dir', type=str)
+parser.add_argument(
+    '--scheme-output',
+    type=str,
+    default=None,
+    help='output path for the searched layer-wise scheme',
+)
 parser.add_argument('--resume_from', default='', help='resume_from')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
@@ -46,7 +68,7 @@ parser.add_argument('--schedule', type=int, nargs='+', default=[30, 60],
                         help='Decrease learning rate at these epochs.')
 parser.add_argument('--gamma', type=float, default=0.1, help='LR is multiplied by gamma on schedule.')
 
-args = parser.parse_args()
+args = None
 
 
 # start_epoch_complexity_loss = 20
@@ -83,21 +105,22 @@ def main():
     args = parser.parse_args()
 
     with open(args.config) as f:
-        config = yaml.load(f)
+        config = yaml.safe_load(f)
+
+    if config is None:
+        raise ValueError("The config file is empty: {}".format(args.config))
 
     for key in config:
         for k, v in config[key].items():
             setattr(args, k, v)
-    # print(args.Ns)
-    # exit(0)
-    print('Enabled distributed training.')
-
-
-
     rank, world_size = init_dist(
         backend='nccl', port=args.port)
     args.rank = rank
     args.world_size = world_size
+    args.device = get_device()
+    if rank == 0:
+        mode = "distributed ({} GPUs)".format(world_size) if world_size > 1 else "single GPU"
+        print("Running in {} mode on {}.".format(mode, args.device))
 
     # create model
     if rank == 0:
@@ -142,12 +165,12 @@ def main():
 
 
     #exit(0)
-    model.cuda()
+    model.to(args.device)
     broadcast_params(model)
 
 
     # define loss function (criterion) and optimizer
-    criterion = nn.CrossEntropyLoss().cuda()
+    criterion = nn.CrossEntropyLoss().to(args.device)
     optimizer = torch.optim.SGD(model.parameters(), args.finetue_lr, # change this to fine - tune learning rate 0.0010
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
@@ -197,19 +220,35 @@ def main():
             normalize,
         ]))
 
-    train_sampler = DistributedSampler(train_dataset)
-    val_sampler = DistributedSampler(val_dataset)
+    # Use an explicit sampler even on one GPU to preserve the sample ordering
+    # of the original distributed-launch implementation.
+    train_sampler = DistributedSampler(
+        train_dataset,
+        num_replicas=world_size,
+        rank=rank,
+        shuffle=True,
+    )
+    val_sampler = DistributedSampler(
+        val_dataset,
+        num_replicas=world_size,
+        rank=rank,
+        shuffle=False,
+    )
 
     train_loader = DataLoader(
-        train_dataset, batch_size=args.batch_size//args.world_size, shuffle=False,
-        num_workers=args.workers, pin_memory=False, sampler=train_sampler)
+        train_dataset, batch_size=args.batch_size//args.world_size,
+        shuffle=False, num_workers=args.workers, pin_memory=True,
+        sampler=train_sampler)
 
     val_loader = DataLoader(
         val_dataset, batch_size=args.batch_size//args.world_size, shuffle=False,
-        num_workers=args.workers, pin_memory=False, sampler=val_sampler)
+        num_workers=args.workers, pin_memory=True, sampler=val_sampler)
 
     if args.evaluate:
         validate(val_loader, model, criterion, 0, writer)
+        if writer is not None:
+            writer.close()
+        cleanup_dist()
         return
 
     niters = len(train_loader)
@@ -222,7 +261,7 @@ def main():
 
     # print("initialize")
     initialize_mod_threshold(model)
-    sum_srt,_ = summary(model, input_size=(3, 224, 224))
+    sum_srt,_ = summary(model, input_size=(3, 224, 224), device=args.device)
 
     set_flops(model)
 
@@ -292,6 +331,8 @@ def main():
             best_prec1 = max(prec1, best_prec1)
     if rank == 0:
         print("Best accuracy is ",best_prec1 )
+        writer.close()
+    cleanup_dist()
 
 def train(train_loader, model, criterion, optimizer,epoch, writer):
     batch_time = AverageMeter()
@@ -304,7 +345,6 @@ def train(train_loader, model, criterion, optimizer,epoch, writer):
 
     # switch to train mode
     model.train()
-    world_size = args.world_size
     rank = args.rank
 
     apply_penalty_flag = False
@@ -329,24 +369,19 @@ def train(train_loader, model, criterion, optimizer,epoch, writer):
         # measure data loading time
         data_time.update(time.time() - end)
         #lr_scheduler.update(i, epoch)
-        target = target.cuda(non_blocking=True)
-        input_var = torch.autograd.Variable(input.cuda())
-        target_var = torch.autograd.Variable(target)
+        input_var = input.to(args.device, non_blocking=True)
+        target_var = target.to(args.device, non_blocking=True)
         # compute output
         output = model(input_var)
-        loss = criterion(output, target_var) / world_size
+        loss = criterion(output, target_var)
         current_lr = get_lr(optimizer)
 
         # measure accuracy and record loss
-        prec1, prec5 = accuracy(output, target, topk=(1, 5))
+        prec1, prec5 = accuracy(output, target_var, topk=(1, 5))
 
-        reduced_loss = loss.data.clone()
-        reduced_prec1 = prec1.clone() / world_size
-        reduced_prec5 = prec5.clone() / world_size
-
-        dist.all_reduce_multigpu([reduced_loss])
-        dist.all_reduce_multigpu([reduced_prec1])
-        dist.all_reduce_multigpu([reduced_prec5])
+        reduced_loss = reduce_tensor(loss)
+        reduced_prec1 = reduce_tensor(prec1)
+        reduced_prec5 = reduce_tensor(prec5)
 
         losses.update(reduced_loss.item(), input.size(0))
         top1.update(reduced_prec1.item(), input.size(0))
@@ -406,34 +441,28 @@ def validate(val_loader, model, criterion, epoch, writer):
 
     # switch to evaluate mode
     model.eval()
-    world_size = args.world_size
     rank = args.rank
 
     with torch.no_grad():
         end = time.time()
         for i, (input, target) in enumerate(val_loader):
-            target = target.cuda(non_blocking=True)
-            input_var = torch.autograd.Variable(input.cuda())
-            target_var = torch.autograd.Variable(target)
+            input_var = input.to(args.device, non_blocking=True)
+            target_var = target.to(args.device, non_blocking=True)
 
             # compute output
             output = model(input_var)
-            loss = criterion(output, target_var) / world_size
+            loss = criterion(output, target_var)
 
             # measure accuracy and record loss
-            prec1, prec5 = accuracy(output, target, topk=(1, 5))
+            prec1, prec5 = accuracy(output, target_var, topk=(1, 5))
 
-            reduced_loss = loss.data.clone()
-            reduced_prec1 = prec1.clone() / world_size
-            reduced_prec5 = prec5.clone() / world_size
-
-            dist.all_reduce_multigpu([reduced_loss])
-            dist.all_reduce_multigpu([reduced_prec1])
-            dist.all_reduce_multigpu([reduced_prec5])
+            reduced_loss = reduce_tensor(loss)
+            reduced_prec1 = reduce_tensor(prec1)
+            reduced_prec5 = reduce_tensor(prec5)
 
             losses.update(reduced_loss.item(), input.size(0))
-            top1.update(prec1.item(), input.size(0))
-            top5.update(prec5.item(), input.size(0))
+            top1.update(reduced_prec1.item(), input.size(0))
+            top5.update(reduced_prec5.item(), input.size(0))
 
             # measure elapsed time
             batch_time.update(time.time() - end)
@@ -492,6 +521,17 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 
+def save_searched_scheme(scheme):
+    output_path = args.scheme_output
+    if output_path is None:
+        output_path = os.path.join(args.model_dir, 'searched_scheme.txt')
+    output_dir = os.path.dirname(os.path.abspath(output_path))
+    os.makedirs(output_dir, exist_ok=True)
+    with open(output_path, 'w') as output_file:
+        output_file.write(repr(scheme) + '\n')
+    print("Saved searched scheme to '{}'".format(output_path))
+
+
 #================================================================Below are functions for searching===================================================#
 
 # core function
@@ -514,7 +554,7 @@ def adjust_N_M_of_each_layer_based_on_each_group(net,target_sparsity,epoch,itera
             # elif 'SparseConv0' in layer_name: # you can specify constraints for certain layers if you want
             #     continue
             else:
-                if mod.learned_threshold == None:# initialize threshold T for once
+                if mod.learned_threshold is None:# initialize threshold T for once
                     mod.update_learned_sparsity()
                 
                 global vote_ratio
@@ -609,6 +649,7 @@ def adjust_N_M_of_each_layer_based_on_each_group(net,target_sparsity,epoch,itera
                                 )
                             # print('Decision logs')
                             # print(decision_dict)
+                            save_searched_scheme(net.check_N_M())
                         exit(0)
 
 
@@ -616,9 +657,9 @@ def adjust_N_M_of_each_layer_based_on_each_group(net,target_sparsity,epoch,itera
 # def check_contributions_gradient_and
 
 def average_two_normalization(norm_dict1,norm_dict2,w1=0.5,w2=0.5):
-    if norm_dict1 == None:
+    if norm_dict1 is None:
         return norm_dict2
-    elif norm_dict2 == None :
+    elif norm_dict2 is None:
         return norm_dict1
 
     new_dict = {}
@@ -643,7 +684,7 @@ def set_debug_flag_sparseConv(net,flag):
 def initialize_mod_threshold(net):
     for mod in net.modules():
         if isinstance(mod, SparseConv) or isinstance(mod, SparseLinear):
-            if mod.learned_threshold == None:
+            if mod.learned_threshold is None:
                 mod.update_learned_sparsity()
 
 

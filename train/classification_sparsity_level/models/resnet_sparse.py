@@ -266,9 +266,8 @@ def resnet18_sparse(pretrained=False,progress=True,**kwargs):
     model = ResNetV1(BasicBlock, [2, 2, 2, 2],  **kwargs)
 
     if pretrained:
-        # state_dict = load_state_dict_from_url(model_urls['resnet18_sparse'],
-        #                                       progress=progress)
-        state_dict = torch.load(model_urls['resnet18_sparse'])                                
+        state_dict = load_state_dict_from_url(model_urls['resnet18_sparse'],
+                                              progress=progress)
         model.load_state_dict(state_dict)
     return model
 

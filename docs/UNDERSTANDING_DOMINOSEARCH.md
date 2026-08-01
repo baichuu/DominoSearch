@@ -829,7 +829,7 @@ Lưu ý file training dùng `train_root`, `train_source`, `val_root` và `val_so
 
 ---
 
-## 13. Quy trình chạy theo thiết kế gốc
+## 13. Quy trình chạy trên PyTorch hiện đại
 
 ### 13.1 Pha search
 
@@ -838,19 +838,17 @@ Trước tiên sửa đường dẫn ImageNet trong file YAML, sau đó:
 ```bash
 cd search/script_resnet_ImageNet
 
-python -m torch.distributed.launch \
-  --nproc_per_node=1 \
-  ../find_mix_from_dense_imagenet.py \
+python -u ../find_mix_from_dense_imagenet.py \
   --target_sparsity 0.80 \
   --port 64485 \
   --config configs/config_resnet50_img_mix_from_dense.yaml
 ```
 
-Theo README, pha này có thể mất vài giờ. Code in scheme ra terminal khi đạt mục tiêu; bản hiện tại không tự động ghi scheme cuối vào file.
+Theo README, pha này có thể mất vài giờ. Khi đạt mục tiêu, code in scheme ra terminal và tự lưu vào `<model_dir>/searched_scheme.txt`. Có thể chọn đường dẫn khác bằng `--scheme-output`.
 
-### 13.2 Lưu scheme
+### 13.2 Sử dụng scheme đã lưu
 
-Copy dictionary được in ra thành một dòng trong file, ví dụ:
+Mặc định scheme nằm trong `<model_dir>/searched_scheme.txt`. Có thể truyền file này trực tiếp cho `--schemes_file`, hoặc copy nó vào thư mục training, ví dụ:
 
 ```text
 train/classification_sparsity_level/train_imagenet/schemes/resnet50_M16_0.80.txt
@@ -863,8 +861,7 @@ Nội dung phải là Python dictionary hợp lệ vì training đọc bằng `a
 ```bash
 cd train/classification_sparsity_level/train_imagenet
 
-python -m torch.distributed.launch \
-  --nproc_per_node=8 \
+torchrun --standalone --nproc-per-node=1 \
   ../train_imagenet.py \
   --config configs/config_resnet50.yaml \
   --base_lr 0.01 \
@@ -874,26 +871,26 @@ python -m torch.distributed.launch \
   --model_dir resnet50/resnet50_0.80_M16
 ```
 
-Đây là lệnh theo code gốc. Nó cần môi trường nhiều GPU và các dependency tương thích với thời điểm repository được phát hành.
+Đặt `--nproc-per-node` bằng số GPU khi chạy nhiều GPU. Trên Colab một GPU, có thể gọi trực tiếp `python ../train_imagenet.py ...`; code sẽ tự chuyển sang single-GPU mode mà không tạo distributed process group.
 
 ---
 
 ## 14. Những giới hạn cần biết trước khi chạy
 
-Đây là research code từ khoảng năm 2021. Một số phần đã cũ so với hệ sinh thái PyTorch hiện nay:
+Đây là research code từ khoảng năm 2021. Repository đã được cập nhật các điểm compatibility chính:
 
-- Không có `requirements.txt`, `pyproject.toml` hoặc environment file.
-- Dùng `torch.distributed.launch`, hiện thường được thay bằng `torchrun`.
-- Dùng `dist.all_reduce_multigpu`, có thể không còn trong PyTorch mới.
-- Dùng `yaml.load(f)` không chỉ định loader.
-- Import `torch._six`, module đã bị loại khỏi PyTorch mới.
+- Có `requirements.txt` cho các dependency ngoài PyTorch/torchvision.
+- Single-GPU chạy trực tiếp bằng `python`; multi-GPU dùng `torchrun`.
+- Distributed reduction dùng `dist.all_reduce` hiện đại.
+- YAML được đọc bằng `yaml.safe_load`.
+- Import `torch._six` đã được loại bỏ.
 - Giả định có CUDA và NCCL.
 - Search tải pretrained weight qua URL torchvision cũ.
-- Search in scheme ra terminal rồi `exit(0)` thay vì tự lưu file.
+- Search tự lưu scheme trước khi kết thúc khi đạt target sparsity.
 - Có hai bản `devkit`, làm tăng nguy cơ import nhầm.
 - Không có automated test hoặc license file trong repo hiện tại.
 
-Do đó, nên coi lệnh trong README là mô tả quy trình gốc. Muốn chạy trên máy hiện đại cần xác định phiên bản Python, PyTorch, torchvision, PyYAML và cập nhật distributed API.
+Vẫn nên ghi lại chính xác phiên bản Python, PyTorch, torchvision và CUDA của từng thí nghiệm để bảo đảm khả năng tái lập.
 
 ---
 

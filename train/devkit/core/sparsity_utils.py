@@ -107,7 +107,7 @@ def summary(model, input_size, batch_size=-1, device=torch.device('cuda:0'), dty
 
 
 def summary_string(model, input_size, batch_size=-1, device=torch.device('cuda:0'), dtypes=None):
-    if dtypes == None:
+    if dtypes is None:
         dtypes = [torch.FloatTensor]*len(input_size)
 
     summary_str = ''

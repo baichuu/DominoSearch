@@ -356,7 +356,7 @@ def summary(model, input_size, batch_size=-1, device=torch.device('cuda:0'), dty
 
 
 def summary_string(model, input_size, batch_size=-1, device=torch.device('cuda:0'), dtypes=None):
-    if dtypes == None:
+    if dtypes is None:
         dtypes = [torch.FloatTensor]*len(input_size)
 
     summary_str = ''
@@ -532,4 +532,3 @@ def get_layer_wise_dense_flops_params(net):
       dict_params[layer_name] = dense_params
   
   return dict_flops,dict_params
-
