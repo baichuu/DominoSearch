@@ -26,8 +26,13 @@ def make_row(result: dict[str, Any]) -> dict[str, Any]:
     accuracy = result["accuracy"]
     performance = result["performance"]
     memory = performance.get("peak_device_memory_bytes")
+    experiment = result.get("experiment", {})
+    source = result.get("source", {})
     return {
         "run": result["run_name"],
+        "method": experiment.get("pruning_method"),
+        "status": experiment.get("status"),
+        "branch": source.get("branch"),
         "top1_%": accuracy.get("top1_percent"),
         "top5_%": accuracy.get("top5_percent"),
         "effective_params_M": complexity["effective_parameters"] / 1e6,
@@ -43,6 +48,9 @@ def make_row(result: dict[str, Any]) -> dict[str, Any]:
 def markdown_table(rows: list[dict[str, Any]]) -> str:
     labels = {
         "run": "Run",
+        "method": "Method",
+        "status": "Status",
+        "branch": "Branch",
         "top1_%": "Top-1 %",
         "top5_%": "Top-5 %",
         "effective_params_M": "Eff. params M",
@@ -59,7 +67,12 @@ def markdown_table(rows: list[dict[str, Any]]) -> str:
         "| " + " | ".join("---" for _ in keys) + " |",
     ]
     for row in rows:
-        rendered = [str(row["run"])] + [value(row[key]) for key in keys[1:]]
+        rendered = []
+        for key in keys:
+            item = row[key]
+            rendered.append(
+                str(item) if key in {"run", "method", "status", "branch"} and item else value(item)
+            )
         lines.append("| " + " | ".join(rendered) + " |")
     return "\n".join(lines)
 

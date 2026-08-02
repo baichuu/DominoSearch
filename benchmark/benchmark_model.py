@@ -16,6 +16,7 @@ import os
 import platform
 import random
 import statistics
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -65,6 +66,29 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--device", default="auto", help="auto, cpu, cuda or cuda:INDEX")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--pruning-method",
+        choices=(
+            "dense",
+            "uniform-nm",
+            "domino-mixed-nm",
+            "structured-channel",
+            "unstructured-magnitude",
+        ),
+        default="dense",
+    )
+    parser.add_argument(
+        "--density-source",
+        choices=("nm", "nonzero"),
+        default="nm",
+        help="Use N:M ratios or materialized non-zero weights for effective metrics.",
+    )
+    parser.add_argument(
+        "--experiment-status",
+        choices=("debug", "candidate", "final"),
+        default="debug",
+        help="A debug run must not be used as final optimization evidence.",
+    )
 
     parser.add_argument(
         "--dataset-format", choices=("none", "imagefolder", "meta"), default="none"
@@ -109,6 +133,28 @@ def seed_everything(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+
+def git_info() -> dict[str, Any]:
+    def run_git(*arguments: str) -> str | None:
+        try:
+            completed = subprocess.run(
+                ["git", *arguments],
+                cwd=REPO_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            return None
+        return completed.stdout.strip()
+
+    status = run_git("status", "--porcelain")
+    return {
+        "branch": run_git("branch", "--show-current"),
+        "commit": run_git("rev-parse", "HEAD"),
+        "dirty": bool(status) if status is not None else None,
+    }
 
 
 def load_scheme(path: Path) -> dict[str, list[int]]:
@@ -206,7 +252,7 @@ def percentile(values: list[float], percent: float) -> float:
 
 
 def measure_complexity(
-    model: nn.Module, device: torch.device, input_size: int
+    model: nn.Module, device: torch.device, input_size: int, density_source: str
 ) -> dict[str, float | int]:
     macs_by_module: dict[nn.Module, int] = {}
     hooks = []
@@ -237,7 +283,14 @@ def measure_complexity(
     dense_macs = sum(macs_by_module.values())
     effective_macs = 0.0
     for module, module_macs in macs_by_module.items():
-        ratio = module.N / module.M if isinstance(module, (SparseConv, SparseLinear)) else 1.0
+        if density_source == "nonzero":
+            ratio = torch.count_nonzero(module.weight).item() / module.weight.numel()
+        else:
+            ratio = (
+                module.N / module.M
+                if isinstance(module, (SparseConv, SparseLinear))
+                else 1.0
+            )
         effective_macs += module_macs * ratio
 
     dense_parameters = sum(parameter.numel() for parameter in model.parameters())
@@ -248,10 +301,15 @@ def measure_complexity(
     sparse_weight_parameters = 0
     effective_sparse_weight_parameters = 0.0
     for module in model.modules():
-        if isinstance(module, (SparseConv, SparseLinear)):
+        if isinstance(module, (nn.Conv2d, nn.Linear)):
             count = module.weight.numel()
             sparse_weight_parameters += count
-            effective = count * module.N / module.M
+            if density_source == "nonzero":
+                effective = torch.count_nonzero(module.weight).item()
+            elif isinstance(module, (SparseConv, SparseLinear)):
+                effective = count * module.N / module.M
+            else:
+                effective = count
             effective_sparse_weight_parameters += effective
             effective_parameters -= count - effective
 
@@ -265,6 +323,7 @@ def measure_complexity(
         "dense_macs_per_sample": dense_macs,
         "effective_macs_per_sample": round(effective_macs),
         "mac_reduction_percent": 100.0 * (1.0 - effective_macs / dense_macs),
+        "density_source": density_source,
     }
 
 
@@ -438,7 +497,7 @@ def main() -> None:
     model, load_info = build_model(args)
     model = model.to(device).eval()
     loader = build_validation_loader(args, device)
-    complexity = measure_complexity(model, device, args.input_size)
+    complexity = measure_complexity(model, device, args.input_size, args.density_source)
     accuracy = measure_accuracy(model, loader, device)
     performance = measure_performance(model, args, device)
 
@@ -450,6 +509,12 @@ def main() -> None:
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "output_file": str(output),
         "environment": environment_info(device),
+        "source": git_info(),
+        "experiment": {
+            "status": args.experiment_status,
+            "pruning_method": args.pruning_method,
+            "seed": args.seed,
+        },
         "model": {
             "name": args.model,
             "checkpoint": str(args.checkpoint.resolve()) if args.checkpoint else None,

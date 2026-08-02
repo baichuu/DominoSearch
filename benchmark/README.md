@@ -4,6 +4,10 @@ Thư mục này tạo số liệu **trước và sau tối ưu** theo cùng mộ
 chính lưu toàn bộ kết quả thành JSON; script còn lại ghép nhiều JSON thành bảng
 Markdown/CSV để so sánh.
 
+Mỗi JSON còn lưu branch, commit, trạng thái dirty, seed, phương pháp pruning và
+trạng thái thí nghiệm. Mặc định là `--experiment-status debug`; chỉ chuyển thành
+`candidate` hoặc `final` sau khi các điều kiện self-check trong `AGENTS.md` đạt.
+
 ## Các chỉ số được đo
 
 - **Top-1 / Top-5 accuracy**: độ chính xác trên tập validation.
@@ -39,6 +43,8 @@ pip install -r requirements.txt
 # Không cần dataset: đo complexity và runtime bằng input ngẫu nhiên.
 python benchmark/benchmark_model.py \
   --run-name dense-synthetic \
+  --pruning-method dense \
+  --experiment-status debug \
   --model resnet18_sparse \
   --checkpoint /path/to/dense_checkpoint.pth \
   --n 1 --m 1 \
@@ -55,6 +61,7 @@ Khi không có dataset, accuracy trong JSON là `not evaluated`.
 ```bash
 python benchmark/benchmark_model.py \
   --run-name dense \
+  --pruning-method dense \
   --model resnet18_sparse \
   --checkpoint /path/to/dense_checkpoint.pth \
   --n 1 --m 1 \
@@ -82,6 +89,7 @@ phần dataset bằng:
 # Cùng dense checkpoint, chỉ thêm mask: đo tổn thất do pruning.
 python benchmark/benchmark_model.py \
   --run-name pruned-before-finetune \
+  --pruning-method domino-mixed-nm \
   --model resnet18_sparse \
   --checkpoint /path/to/dense_checkpoint.pth \
   --scheme-file /path/to/searched_scheme.txt \
@@ -92,6 +100,7 @@ python benchmark/benchmark_model.py \
 # Checkpoint sau fine-tune: đo mức accuracy được phục hồi.
 python benchmark/benchmark_model.py \
   --run-name pruned-after-finetune \
+  --pruning-method domino-mixed-nm \
   --model resnet18_sparse \
   --checkpoint /path/to/finetuned_sparse_checkpoint.pth \
   --scheme-file /path/to/searched_scheme.txt \
@@ -103,6 +112,10 @@ python benchmark/benchmark_model.py \
 File scheme là dictionary do bước search của DominoSearch sinh ra. Có thể thêm
 `--max-eval-samples 1000` để smoke test, nhưng không nên dùng tập con nhỏ làm kết
 quả cuối vì sai số lớn.
+
+Với checkpoint đã materialize số 0 của structured hoặc unstructured pruning, dùng
+`--density-source nonzero`. Với N:M động của `SparseConv`/`SparseLinear`, giữ mặc
+định `--density-source nm` vì dense weight trong checkpoint chưa chứa mask.
 
 ## Tạo bảng so sánh
 
