@@ -91,6 +91,15 @@ def git_value(*arguments: str) -> str | None:
     return result.stdout.strip()
 
 
+def cpu_name() -> str:
+    cpuinfo = Path("/proc/cpuinfo")
+    if cpuinfo.exists():
+        for line in cpuinfo.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.lower().startswith("model name"):
+                return line.split(":", 1)[1].strip()
+    return platform.processor() or platform.machine()
+
+
 def seed_everything(seed: int) -> None:
     random.seed(seed)
     torch.manual_seed(seed)
@@ -308,11 +317,19 @@ def measure_latency(model, args, device):
             values.append((time.perf_counter() - start) * 1000.0)
     median = statistics.median(values)
     return {
-        "iterations": args.latency_iterations,
-        "median_ms": median,
-        "p95_ms": percentile(values, 95),
-        "mean_ms": statistics.fmean(values),
+        "warmup_iterations": args.latency_warmup,
+        "measured_iterations": args.latency_iterations,
+        "batch_size": 1,
+        "latency_ms": {
+            "median": median,
+            "p95": percentile(values, 95),
+            "mean": statistics.fmean(values),
+            "min": min(values),
+            "max": max(values),
+        },
         "throughput_samples_per_second": 1000.0 / median,
+        "peak_device_memory_bytes": None,
+        "incremental_peak_device_memory_bytes": None,
     }
 
 
@@ -396,7 +413,7 @@ def main() -> None:
             "torch": torch.__version__,
             "torchvision": torchvision.__version__,
             "device": str(device),
-            "cpu": platform.processor(),
+            "cpu": cpu_name(),
             "threads": torch.get_num_threads(),
         },
         "model": {
@@ -405,6 +422,18 @@ def main() -> None:
             "parameters": sum(parameter.numel() for parameter in model.parameters()),
             "macs_per_sample": macs,
             "input_shape": [1, 3, 32, 32],
+        },
+        "complexity": {
+            "dense_parameters": sum(parameter.numel() for parameter in model.parameters()),
+            "trainable_parameters": sum(
+                parameter.numel() for parameter in model.parameters() if parameter.requires_grad
+            ),
+            "effective_parameters": sum(parameter.numel() for parameter in model.parameters()),
+            "parameter_reduction_percent": 0.0,
+            "dense_macs_per_sample": macs,
+            "effective_macs_per_sample": macs,
+            "mac_reduction_percent": 0.0,
+            "density_source": "dense",
         },
         "dataset": {
             "name": "CIFAR100",
@@ -421,7 +450,13 @@ def main() -> None:
             "total_seconds": time.perf_counter() - run_start,
             "history": history,
         },
-        "accuracy": final_validation,
+        "accuracy": {
+            "evaluated": True,
+            "samples": final_validation["samples"],
+            "loss": final_validation["loss"],
+            "top1_percent": final_validation["top1_percent"],
+            "top5_percent": final_validation["top5_percent"],
+        },
         "performance": latency,
     }
     output = args.output.expanduser().resolve()
