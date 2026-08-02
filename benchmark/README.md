@@ -146,3 +146,24 @@ LUT và kích thước binary.
 Một kết luận “tối ưu hiệu quả” nên báo cáo đồng thời mức giảm effective MAC/param,
 chênh lệch Top-1 so với dense, và latency/throughput trên đúng phần cứng mục tiêu.
 Không nên chỉ dùng FLOPs/MACs để khẳng định model chắc chắn chạy nhanh hơn.
+
+## Baseline nhanh CIFAR-100 bằng uv
+
+Laptop CPU có thể smoke-test dense ResNet20 trên một split nhỏ cố định:
+
+```bash
+uv sync --python 3.12
+
+UV_CACHE_DIR=.uv-cache uv run python benchmark/train_cifar100_baseline.py \
+  --download \
+  --device cpu \
+  --train-samples 5000 \
+  --val-samples 1000 \
+  --epochs 3 \
+  --batch-size 128 \
+  --threads 8
+```
+
+Runner lưu split indices, best checkpoint và JSON accuracy/MACs/CPU latency. Kết
+quả luôn mang trạng thái `debug`: nó kiểm tra pipeline nhanh, không thay thế full
+CIFAR-100 baseline hoặc ImageNet result.
