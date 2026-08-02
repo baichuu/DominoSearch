@@ -1,9 +1,12 @@
 from __future__ import division
 import argparse
+import json
 import os
 import os.path as osp
+import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 
 # Make the repository-level devkit importable regardless of the working
 # directory used to launch this script.
@@ -54,6 +57,25 @@ parser.add_argument(
 parser.add_argument('--world-size', default=1, type=int)
 parser.add_argument('--rank', default=0, type=int)
 parser.add_argument('--target_sparsity', default=0.0, type=float)
+parser.add_argument(
+    '--target-metric',
+    choices=('params', 'flops'),
+    default='params',
+    help='stop when the requested parameter or FLOPs reduction is reached',
+)
+parser.add_argument(
+    '--erk-weight',
+    type=float,
+    default=None,
+    help='ERK redundancy weight; defaults to 0.5 for params and 0.2 for FLOPs',
+)
+parser.add_argument(
+    '--cost-weight',
+    type=float,
+    default=None,
+    help='complexity weight; defaults to 0.5 for params and 0.8 for FLOPs',
+)
+parser.add_argument('--vote-ratio', type=float, default=0.75)
 parser.add_argument('--model_dir', type=str)
 parser.add_argument(
     '--scheme-output',
@@ -87,8 +109,6 @@ target_sparsity = 0.0
 target_sparsity_erk = 0.0
 
 
-target_sparse_flops_ratio = 0.875
-
 decision_dict = {}
 
 vote_ratio = 0.75
@@ -99,6 +119,38 @@ w1=0.5 # erk
 w2=0.5 # flops 
 
 erk_sparsity_dict = {}
+
+
+def configure_search_objective():
+    global vote_ratio, w1, w2
+    if not 0.0 < args.target_sparsity < 1.0:
+        raise ValueError('--target_sparsity must be between 0 and 1 (exclusive).')
+    if not 0.0 < args.vote_ratio <= 1.0:
+        raise ValueError('--vote-ratio must satisfy 0 < ratio <= 1.')
+
+    default_erk, default_cost = (
+        (0.5, 0.5) if args.target_metric == 'params' else (0.2, 0.8)
+    )
+    w1 = default_erk if args.erk_weight is None else args.erk_weight
+    w2 = default_cost if args.cost_weight is None else args.cost_weight
+    if w1 < 0.0 or w2 < 0.0 or abs((w1 + w2) - 1.0) > 1e-8:
+        raise ValueError('--erk-weight and --cost-weight must be non-negative and sum to 1.')
+    vote_ratio = args.vote_ratio
+
+
+def git_value(*arguments):
+    try:
+        result = subprocess.run(
+            ['git'] + list(arguments),
+            cwd=REPO_ROOT,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return result.stdout.strip()
 
 def main():
     global args, best_prec1
@@ -113,6 +165,7 @@ def main():
     for key in config:
         for k, v in config[key].items():
             setattr(args, k, v)
+    configure_search_objective()
     rank, world_size = init_dist(
         backend='nccl', port=args.port)
     args.rank = rank
@@ -121,6 +174,11 @@ def main():
     if rank == 0:
         mode = "distributed ({} GPUs)".format(world_size) if world_size > 1 else "single GPU"
         print("Running in {} mode on {}.".format(mode, args.device))
+        print(
+            "Search objective: {} reduction {:.4f}; ERK weight {:.2f}; cost weight {:.2f}; vote ratio {:.2f}".format(
+                args.target_metric, args.target_sparsity, w1, w2, vote_ratio
+            )
+        )
 
     # create model
     if rank == 0:
@@ -521,7 +579,7 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 
-def save_searched_scheme(scheme):
+def save_searched_scheme(scheme, metrics=None):
     output_path = args.scheme_output
     if output_path is None:
         output_path = os.path.join(args.model_dir, 'searched_scheme.txt')
@@ -530,6 +588,32 @@ def save_searched_scheme(scheme):
     with open(output_path, 'w') as output_file:
         output_file.write(repr(scheme) + '\n')
     print("Saved searched scheme to '{}'".format(output_path))
+
+    manifest = {
+        'schema_version': 1,
+        'method': 'domino-mixed-nm',
+        'created_utc': datetime.now(timezone.utc).isoformat(),
+        'source': {
+            'branch': git_value('branch', '--show-current'),
+            'commit': git_value('rev-parse', 'HEAD'),
+            'dirty': bool(git_value('status', '--porcelain')),
+        },
+        'objective': {
+            'metric': args.target_metric,
+            'target_reduction': args.target_sparsity,
+            'erk_weight': w1,
+            'cost_weight': w2,
+            'vote_ratio': vote_ratio,
+        },
+        'achieved': metrics or {},
+        'scheme_file': os.path.abspath(output_path),
+        'scheme': scheme,
+    }
+    manifest_path = output_path + '.json'
+    with open(manifest_path, 'w') as manifest_file:
+        json.dump(manifest, manifest_file, indent=2, sort_keys=True)
+        manifest_file.write('\n')
+    print("Saved search manifest to '{}'".format(manifest_path))
 
 
 #================================================================Below are functions for searching===================================================#
@@ -619,27 +703,18 @@ def adjust_N_M_of_each_layer_based_on_each_group(net,target_sparsity,epoch,itera
                     decision_dict[current_overall_sparsity] = (iterations,current_scheme)
                     
                     
-                    # use codes below when using FLOPs as optimization goal.
-                    ###### FLOPS#####, remember to change target_sparse_flops_ratio before #####
-                    # if current_flops_ratio >= target_sparse_flops_ratio-0.001:
-                    #     if args.rank == 0:
-                    #         print('Target target_sparse_flops_ratio {:.3f} has been achieved, current current_flops_ratio is {:.3f}'.format(target_sparse_flops_ratio, current_flops_ratio))
-                    #         print('The schemes of each layer')
-                    #         print(net.check_N_M())
-                    #         total_sparse_flops,total_dense_flops = compute_flops_reduction(net)
-                    #         print('Current FLOPs: sparse - {:.4f} M , dense - {:.4f} M, sparse/dense - {:.4f}'.format(
-                    #             total_sparse_flops*1e-6,total_dense_flops*1e-6, total_sparse_flops/total_dense_flops
-                    #             )
-                    #             )
-                    #        # print('Decision logs')
-                    #        # print(decision_dict)
-                    #     exit(0)
-
-                    # use this when using model size as optimization goal.
-                    #### Model size#####
-                    if current_overall_sparsity >= target_sparsity-0.001:
+                    current_target_value = (
+                        current_overall_sparsity
+                        if args.target_metric == 'params'
+                        else current_flops_ratio
+                    )
+                    if current_target_value >= target_sparsity-0.001:
                         if args.rank == 0:
-                            print('Target Sparsity {:.5f} has been achieved, current sparsity is {:.5f}'.format(target_sparsity, current_overall_sparsity))
+                            print(
+                                'Target {} reduction {:.5f} has been achieved; current value is {:.5f}'.format(
+                                    args.target_metric, target_sparsity, current_target_value
+                                )
+                            )
                             print('The schemes of each layer')
                             print(net.check_N_M())
                             total_sparse_flops,total_dense_flops = compute_flops_reduction(net)
@@ -649,7 +724,15 @@ def adjust_N_M_of_each_layer_based_on_each_group(net,target_sparsity,epoch,itera
                                 )
                             # print('Decision logs')
                             # print(decision_dict)
-                            save_searched_scheme(net.check_N_M())
+                            save_searched_scheme(
+                                net.check_N_M(),
+                                {
+                                    'parameter_reduction': current_overall_sparsity,
+                                    'flops_reduction': current_flops_ratio,
+                                    'iterations': num_iters,
+                                    'epoch': epoch,
+                                },
+                            )
                         exit(0)
 
 
