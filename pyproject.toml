@@ -1,0 +1,24 @@
+[project]
+name = "domino-search"
+version = "0.1.0"
+description = "Reproducible pruning experiments for DominoSearch"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "matplotlib",
+    "numpy",
+    "pillow",
+    "pyyaml",
+    "tensorboardx",
+    "torch>=2.1",
+    "torchvision>=0.16",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
