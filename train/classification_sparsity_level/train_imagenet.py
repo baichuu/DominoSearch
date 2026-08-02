@@ -28,9 +28,13 @@ from devkit.core import (
     cleanup_dist,
     get_device,
     init_dist,
+    apply_parameter_masks,
+    load_initial_checkpoint,
+    load_parameter_masks,
     load_state,
     load_state_ckpt,
     reduce_tensor,
+    register_parameter_mask_hooks,
     save_checkpoint,
     set_sparse_scheme,
 )
@@ -58,6 +62,16 @@ parser.add_argument('--base_lr', default=0.1,type=float)
 parser.add_argument('--weight_decay', default=0.00005,type=float)
 parser.add_argument('--model_dir', type=str,  default='resnet56_cifar/resnet56_M')
 parser.add_argument('--resume_from', default='', help='resume_from')
+parser.add_argument(
+    '--initial-checkpoint',
+    default='',
+    help='exact checkpoint used to initialize a new fine-tuning run',
+)
+parser.add_argument(
+    '--weight-mask-file',
+    default='',
+    help='parameter masks kept fixed during fine-tuning',
+)
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
 
@@ -103,7 +117,13 @@ def main():
     #     model = models.__dict__[args.model](pretrained=False,N = args.N, M = args.M) #NHWC
     #     load_state_file(args.resume_from,model)
 
-    model = models.__dict__[args.model](pretrained=True,N = args.N, M = args.M)
+    model = models.__dict__[args.model](
+        pretrained=not bool(args.initial_checkpoint), N=args.N, M=args.M
+    )
+    if args.initial_checkpoint:
+        load_initial_checkpoint(args.initial_checkpoint, model)
+        if rank == 0:
+            print("Loaded exact initial checkpoint '{}'".format(args.initial_checkpoint))
 
     #model.set_datalayout('NHWC')
 
@@ -160,6 +180,23 @@ def main():
         load_state_ckpt(args.checkpoint_path, model)
     else:
         best_prec1, start_epoch = load_state(model_dir, model, optimizer=optimizer)
+
+    args.parameter_masks = {}
+    args.parameter_mask_hooks = []
+    if args.weight_mask_file:
+        args.parameter_masks = load_parameter_masks(
+            args.weight_mask_file, model, args.device
+        )
+        apply_parameter_masks(model, args.parameter_masks)
+        args.parameter_mask_hooks = register_parameter_mask_hooks(
+            model, args.parameter_masks
+        )
+        if rank == 0:
+            print(
+                "Loaded {} persistent parameter mask(s) from '{}'".format(
+                    len(args.parameter_masks), args.weight_mask_file
+                )
+            )
     if args.rank == 0:
         writer = SummaryWriter(model_dir)
     else:
@@ -305,6 +342,8 @@ def train(train_loader, model, criterion, optimizer, lr_scheduler, epoch, writer
         
         average_gradients(model)
         optimizer.step()
+        if args.parameter_masks:
+            apply_parameter_masks(model, args.parameter_masks)
        
 
         # measure elapsed time
