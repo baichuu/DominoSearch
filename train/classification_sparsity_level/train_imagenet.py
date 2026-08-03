@@ -10,12 +10,16 @@ import time
 TRAIN_ROOT = osp.abspath(osp.join(osp.dirname(__file__), ".."))
 if TRAIN_ROOT not in sys.path:
     sys.path.insert(0, TRAIN_ROOT)
+REPO_ROOT = osp.abspath(osp.join(TRAIN_ROOT, ".."))
+if REPO_ROOT not in sys.path:
+    sys.path.append(REPO_ROOT)
 
 import torch
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
 from torch.utils.data.distributed import DistributedSampler
 import torchvision.transforms as transforms
+import torchvision.datasets as datasets
 from torch.utils.data import DataLoader
 import yaml
 from tensorboardX import SummaryWriter
@@ -41,6 +45,7 @@ from devkit.core import (
 
 from devkit.core import load_state_file
 from devkit.dataset.imagenet_dataset import ColorAugmentation, ImagenetDataset
+from imagenet_data import ParquetImageNetDataset
 
 
 
@@ -72,6 +77,26 @@ parser.add_argument(
     default='',
     help='parameter masks kept fixed during fine-tuning',
 )
+parser.add_argument(
+    '--dataset-format',
+    choices=('meta', 'imagefolder', 'parquet'),
+    default='meta',
+    help='meta preserves the original loader; parquet streams local Drive shards',
+)
+parser.add_argument('--data-root', default='', help='ImageFolder root containing train/val')
+parser.add_argument('--parquet-root', default='', help='root containing ImageNet Parquet shards')
+parser.add_argument('--train-parquet-pattern', default='data/train-*.parquet')
+parser.add_argument('--val-parquet-pattern', default='data/validation-*.parquet')
+parser.add_argument('--train-num-samples', type=int, default=1281167)
+parser.add_argument('--val-num-samples', type=int, default=50000)
+parser.add_argument('--shuffle-buffer', type=int, default=10000)
+parser.add_argument('--seed', type=int, default=42)
+parser.add_argument(
+    '--data-workers',
+    type=int,
+    default=None,
+    help='override YAML workers without changing the original config',
+)
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
 
@@ -95,6 +120,10 @@ def main():
     for key in config:
         for k, v in config[key].items():
             setattr(args, k, v)
+    if args.data_workers is not None:
+        if args.data_workers < 0:
+            raise ValueError('--data-workers cannot be negative')
+        args.workers = args.data_workers
 
     rank, world_size = init_dist(
         backend='nccl', port=args.port )
@@ -211,50 +240,89 @@ def main():
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
-    train_dataset = ImagenetDataset(
-        args.train_root,
-        args.train_source,
-        transforms.Compose([
-            transforms.RandomResizedCrop(224),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            ColorAugmentation(),
-            normalize,
-        ]))
-    val_dataset = ImagenetDataset(
-        args.val_root,
-        args.val_source,
-        transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            normalize,
-        ]))
+    train_transform = transforms.Compose([
+        transforms.RandomResizedCrop(224),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        ColorAugmentation(),
+        normalize,
+    ])
+    val_transform = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        normalize,
+    ])
+    if args.dataset_format == 'meta':
+        train_dataset = ImagenetDataset(
+            args.train_root, args.train_source, train_transform
+        )
+        val_dataset = ImagenetDataset(args.val_root, args.val_source, val_transform)
+    elif args.dataset_format == 'imagefolder':
+        if not args.data_root:
+            raise ValueError('--data-root is required for imagefolder datasets')
+        train_dataset = datasets.ImageFolder(
+            osp.join(args.data_root, 'train'), transform=train_transform
+        )
+        val_dataset = datasets.ImageFolder(
+            osp.join(args.data_root, 'val'), transform=val_transform
+        )
+    else:
+        if not args.parquet_root:
+            raise ValueError('--parquet-root is required for parquet datasets')
+        train_dataset = ParquetImageNetDataset(
+            args.parquet_root,
+            args.train_parquet_pattern,
+            'train',
+            train_transform,
+            args.train_num_samples,
+            shuffle=True,
+            seed=args.seed,
+            shuffle_buffer=args.shuffle_buffer,
+            rank=rank,
+            world_size=world_size,
+        )
+        val_dataset = ParquetImageNetDataset(
+            args.parquet_root,
+            args.val_parquet_pattern,
+            'validation',
+            val_transform,
+            args.val_num_samples,
+            shuffle=False,
+            seed=args.seed,
+            shuffle_buffer=1,
+            rank=rank,
+            world_size=world_size,
+        )
 
 
     # Use an explicit sampler even on one GPU to preserve the sample ordering
     # of the original distributed-launch implementation.
-    train_sampler = DistributedSampler(
-        train_dataset,
-        num_replicas=world_size,
-        rank=rank,
-        shuffle=True,
-    )
-    val_sampler = DistributedSampler(
-        val_dataset,
-        num_replicas=world_size,
-        rank=rank,
-        shuffle=False,
-    )
+    if args.dataset_format == 'parquet':
+        train_sampler = None
+        val_sampler = None
+    else:
+        train_sampler = DistributedSampler(
+            train_dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=True,
+        )
+        val_sampler = DistributedSampler(
+            val_dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=False,
+        )
 
     train_loader = DataLoader(
         train_dataset, batch_size=args.batch_size//args.world_size,
-        shuffle=False, num_workers=args.workers, pin_memory=True,
+        shuffle=False, num_workers=args.workers, pin_memory=args.device.type == 'cuda',
         sampler=train_sampler)
 
     val_loader = DataLoader(
         val_dataset, batch_size=args.batch_size//args.world_size, shuffle=False,
-        num_workers=args.workers, pin_memory=True, sampler=val_sampler)
+        num_workers=args.workers, pin_memory=args.device.type == 'cuda', sampler=val_sampler)
 
     if args.evaluate:
         validate(val_loader, model, criterion, 0, writer)
@@ -273,7 +341,10 @@ def main():
 
 
     for epoch in range(start_epoch, args.epochs):
-        train_sampler.set_epoch(epoch)
+        if train_sampler is not None:
+            train_sampler.set_epoch(epoch)
+        else:
+            train_dataset.set_epoch(epoch)
 
         train(train_loader, model, criterion, optimizer, lr_scheduler, epoch, writer)
 
