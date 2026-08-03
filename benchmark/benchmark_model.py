@@ -29,6 +29,8 @@ TRAIN_ROOT = REPO_ROOT / "train"
 MODEL_ROOT = TRAIN_ROOT / "classification_sparsity_level"
 sys.path.insert(0, str(MODEL_ROOT))
 sys.path.insert(0, str(TRAIN_ROOT))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
 
 try:
     import torch
@@ -40,6 +42,7 @@ try:
     import models
     from devkit.dataset.imagenet_dataset import ImagenetDataset
     from devkit.sparse_ops import SparseConv, SparseLinear
+    from imagenet_data import ParquetImageNetDataset
 except ImportError as exc:  # pragma: no cover - gives a useful message on a clean host
     raise SystemExit(
         "Missing benchmark dependencies. Install them with: "
@@ -91,11 +94,24 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--dataset-format", choices=("none", "imagefolder", "meta"), default="none"
+        "--dataset-format",
+        choices=("none", "imagefolder", "meta", "parquet"),
+        default="none",
     )
     parser.add_argument("--data-root", type=Path, help="ImageFolder validation directory.")
     parser.add_argument("--val-root", type=Path, help="Image root for a meta-file dataset.")
     parser.add_argument("--val-source", type=Path, help="Lines formatted as: path class_id.")
+    parser.add_argument(
+        "--parquet-root",
+        type=Path,
+        help="Directory containing local ImageNet Parquet shards (Google Drive is supported).",
+    )
+    parser.add_argument(
+        "--parquet-pattern",
+        default="data/validation-*.parquet",
+        help="Glob relative to --parquet-root for validation shards.",
+    )
+    parser.add_argument("--dataset-num-samples", type=int, default=50_000)
     parser.add_argument("--accuracy-batch-size", type=int, default=64)
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--max-eval-samples", type=int, default=0, help="0 evaluates all.")
@@ -117,6 +133,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--data-root is required for --dataset-format imagefolder.")
     if args.dataset_format == "meta" and (not args.val_root or not args.val_source):
         raise ValueError("--val-root and --val-source are required for meta datasets.")
+    if args.dataset_format == "parquet" and not args.parquet_root:
+        raise ValueError("--parquet-root is required for --dataset-format parquet.")
+    if args.dataset_num_samples <= 0:
+        raise ValueError("--dataset-num-samples must be positive.")
 
 
 def resolve_device(requested: str) -> torch.device:
@@ -343,9 +363,24 @@ def build_validation_loader(args: argparse.Namespace, device: torch.device) -> D
     )
     if args.dataset_format == "imagefolder":
         dataset = datasets.ImageFolder(str(args.data_root), transform=transform)
-    else:
+    elif args.dataset_format == "meta":
         dataset = ImagenetDataset(str(args.val_root), str(args.val_source), transform=transform)
-    if args.max_eval_samples and args.max_eval_samples < len(dataset):
+    else:
+        dataset = ParquetImageNetDataset(
+            args.parquet_root,
+            args.parquet_pattern,
+            "validation",
+            transform,
+            args.dataset_num_samples,
+            shuffle=False,
+            seed=args.seed,
+            shuffle_buffer=1,
+        )
+    if (
+        args.dataset_format != "parquet"
+        and args.max_eval_samples
+        and args.max_eval_samples < len(dataset)
+    ):
         dataset = Subset(dataset, range(args.max_eval_samples))
     return DataLoader(
         dataset,
@@ -357,7 +392,10 @@ def build_validation_loader(args: argparse.Namespace, device: torch.device) -> D
 
 
 def measure_accuracy(
-    model: nn.Module, loader: DataLoader | None, device: torch.device
+    model: nn.Module,
+    loader: DataLoader | None,
+    device: torch.device,
+    max_samples: int = 0,
 ) -> dict[str, Any]:
     if loader is None:
         return {"evaluated": False, "samples": 0, "top1_percent": None, "top5_percent": None}
@@ -366,6 +404,12 @@ def measure_accuracy(
     samples = 0
     with torch.inference_mode():
         for images, target in loader:
+            if max_samples:
+                remaining = max_samples - samples
+                if remaining <= 0:
+                    break
+                images = images[:remaining]
+                target = target[:remaining]
             images = images.to(device, non_blocking=True)
             target = target.to(device, non_blocking=True)
             output = model(images)
@@ -498,7 +542,7 @@ def main() -> None:
     model = model.to(device).eval()
     loader = build_validation_loader(args, device)
     complexity = measure_complexity(model, device, args.input_size, args.density_source)
-    accuracy = measure_accuracy(model, loader, device)
+    accuracy = measure_accuracy(model, loader, device, args.max_eval_samples)
     performance = measure_performance(model, args, device)
 
     output = args.output.expanduser().resolve()
@@ -532,6 +576,20 @@ def main() -> None:
             "data_root": str(args.data_root.resolve()) if args.data_root else None,
             "val_root": str(args.val_root.resolve()) if args.val_root else None,
             "val_source": str(args.val_source.resolve()) if args.val_source else None,
+            "parquet_root": (
+                str(args.parquet_root.expanduser().resolve()) if args.parquet_root else None
+            ),
+            "parquet_pattern": (
+                args.parquet_pattern if args.dataset_format == "parquet" else None
+            ),
+            "expected_samples": (
+                args.dataset_num_samples if args.dataset_format == "parquet" else None
+            ),
+            "parquet_manifest": (
+                loader.dataset.manifest()
+                if args.dataset_format == "parquet" and loader is not None
+                else None
+            ),
             "max_eval_samples": args.max_eval_samples,
         },
         "complexity": complexity,
