@@ -56,6 +56,25 @@ Khi không có dataset, accuracy trong JSON là `not evaluated`.
 
 ## Đo đầy đủ với ImageFolder
 
+### Tải riêng ImageNet validation trên Colab
+
+Dataset `ILSVRC/imagenet-1k` trên Hugging Face có kiểm soát truy cập. Trước tiên,
+đồng ý điều khoản trên trang dataset và đăng nhập bằng token có quyền đọc. Không
+dùng trực tiếp `load_dataset(..., split="validation")`: backend có thể tải cả 294
+training shard. Utility dưới đây liệt kê file trước và chỉ tải `validation-*`:
+
+```bash
+pip install -r requirements.txt
+huggingface-cli login
+python benchmark/get_imagenet_validation.py \
+  --output /content/imagenet-val \
+  --cache-dir /content/hf-imagenet-val-cache
+```
+
+Script giữ nguyên byte ảnh, tạo 1.000 thư mục class `0000`–`0999`, và chỉ thành
+công khi đếm đủ 50.000 ảnh. Dataset và cache được đặt ngoài repository; không
+commit chúng. Sau đó dùng `/content/imagenet-val` với `--data-root`.
+
 `/path/to/imagenet/val` phải có mỗi class là một thư mục con:
 
 ```bash

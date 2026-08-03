@@ -3,5 +3,7 @@ matplotlib
 Pillow
 PyYAML
 tensorboardX
+datasets>=3.0
+huggingface_hub>=0.25
 torch>=2.1
 torchvision>=0.16
