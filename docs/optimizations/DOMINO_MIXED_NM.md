@@ -29,6 +29,7 @@ objective, target, giá trị đạt được và scheme đầy đủ.
 ```bash
 python search/find_mix_from_dense_imagenet.py \
   --config search/script_resnet_ImageNet/configs/config_resnet18_img_mix_from_dense.yaml \
+  --initial-checkpoint /path/to/resnet18-dense.pth \
   --target-metric params \
   --target_sparsity 0.50 \
   --scheme-output experiments/domino/resnet18-params-50.txt
@@ -39,6 +40,7 @@ python search/find_mix_from_dense_imagenet.py \
 ```bash
 python search/find_mix_from_dense_imagenet.py \
   --config search/script_resnet_ImageNet/configs/config_resnet18_img_mix_from_dense.yaml \
+  --initial-checkpoint /path/to/resnet18-dense.pth \
   --target-metric flops \
   --target_sparsity 0.50 \
   --scheme-output experiments/domino/resnet18-flops-50.txt

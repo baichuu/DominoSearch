@@ -1,5 +1,6 @@
 from __future__ import division
 import argparse
+import hashlib
 import json
 import os
 import os.path as osp
@@ -80,6 +81,11 @@ parser.add_argument(
 )
 parser.add_argument('--vote-ratio', type=float, default=0.75)
 parser.add_argument('--model_dir', type=str)
+parser.add_argument(
+    '--initial-checkpoint',
+    default='',
+    help='exact dense checkpoint used to initialize the search model',
+)
 parser.add_argument(
     '--scheme-output',
     type=str,
@@ -175,6 +181,36 @@ def git_value(*arguments):
         return None
     return result.stdout.strip()
 
+
+def load_initial_checkpoint(model, path):
+    checkpoint = torch.load(path, map_location='cpu')
+    state = (
+        checkpoint.get('state_dict', checkpoint)
+        if isinstance(checkpoint, dict)
+        else checkpoint
+    )
+    if not isinstance(state, dict):
+        raise ValueError('Checkpoint must be a state_dict or contain state_dict.')
+    state = {name.removeprefix('module.'): value for name, value in state.items()}
+    incompatible = model.load_state_dict(state, strict=False)
+    if incompatible.missing_keys or incompatible.unexpected_keys:
+        raise ValueError(
+            'Initial checkpoint does not exactly match the search model. '
+            'Missing keys: {}; unexpected keys: {}'.format(
+                list(incompatible.missing_keys)[:5],
+                list(incompatible.unexpected_keys)[:5],
+            )
+        )
+    with open(path, 'rb') as checkpoint_file:
+        digest = hashlib.sha256(checkpoint_file.read()).hexdigest()
+    return {
+        'path': os.path.abspath(path),
+        'size_bytes': os.path.getsize(path),
+        'sha256': digest,
+        'missing_keys': [],
+        'unexpected_keys': [],
+    }
+
 def main():
     global args, best_prec1
     args = parser.parse_args()
@@ -212,7 +248,19 @@ def main():
         print("=> creating model '{}'".format(args.model))
         print("=> M = ", args.M)
     
-    model = models.__dict__[args.model](pretrained=True,N = args.N, M = args.M,search = True)
+    model = models.__dict__[args.model](
+        pretrained=not bool(args.initial_checkpoint),
+        N=args.N,
+        M=args.M,
+        search=True,
+    )
+    args.checkpoint_manifest = None
+    if args.initial_checkpoint:
+        args.checkpoint_manifest = load_initial_checkpoint(
+            model, args.initial_checkpoint
+        )
+        if rank == 0:
+            print("Loaded exact initial checkpoint '{}'".format(args.initial_checkpoint))
     
     #print(model)
 
@@ -667,6 +715,7 @@ def save_searched_scheme(scheme, metrics=None):
             'cost_weight': w2,
             'vote_ratio': vote_ratio,
         },
+        'initial_checkpoint': args.checkpoint_manifest,
         'achieved': metrics or {},
         'scheme_file': os.path.abspath(output_path),
         'scheme': scheme,

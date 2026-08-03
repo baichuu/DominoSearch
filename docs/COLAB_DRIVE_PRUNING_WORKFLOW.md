@@ -148,6 +148,7 @@ Trên `pruning-domino-mixed-nm`:
 ```bash
 python search/find_mix_from_dense_imagenet.py \
   --config search/script_resnet_ImageNet/configs/config_resnet18_img_mix_from_dense.yaml \
+  --initial-checkpoint /content/drive/MyDrive/DominoSearch-artifacts/checkpoints/resnet18-dense.pth \
   --dataset-format parquet \
   --parquet-root /content/drive/MyDrive/DominoSearch-data/imagenet-1k \
   --train-parquet-pattern 'data/train-*.parquet' \
