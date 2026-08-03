@@ -54,26 +54,48 @@ python benchmark/benchmark_model.py \
 
 Khi không có dataset, accuracy trong JSON là `not evaluated`.
 
-## Đo đầy đủ với ImageFolder
+## Đo đầy đủ với dataset trên Google Drive
 
-### Tải riêng ImageNet validation trên Colab
+Workflow Colab khuyến nghị giữ các shard Parquet đã tải trong Drive và đọc trực
+tiếp, thay vì tạo 1,28 triệu file ảnh nhỏ. Cấu trúc mặc định:
 
-Dataset `ILSVRC/imagenet-1k` trên Hugging Face có kiểm soát truy cập. Trước tiên,
-đồng ý điều khoản trên trang dataset và đăng nhập bằng token có quyền đọc. Không
-dùng trực tiếp `load_dataset(..., split="validation")`: backend có thể tải cả 294
-training shard. Utility dưới đây liệt kê file trước và chỉ tải `validation-*`:
-
-```bash
-pip install -r requirements.txt
-huggingface-cli login
-python benchmark/get_imagenet_validation.py
+```text
+/content/drive/MyDrive/DominoSearch-data/imagenet-1k/
+└── data/
+    ├── train-00000-of-00294.parquet
+    ├── ...
+    ├── validation-00000-of-00014.parquet
+    └── ...
 ```
 
-Script giữ nguyên byte ảnh, tạo 1.000 thư mục class `0000`–`0999`, và chỉ thành
-công khi đếm đủ 50.000 ảnh. Dataset và cache được đặt ngoài repository; không
-commit chúng. Mặc định Colab dùng `/content/imagenet-val` cho output và
-`/content/hf-imagenet-val-cache` cho cache. Sau đó dùng output này với
-`--data-root`.
+Đo validation trực tiếp từ 14 shard, không tạo bản sao Arrow và không materialize
+ImageFolder:
+
+```bash
+python benchmark/benchmark_model.py \
+  --run-name dense-drive \
+  --pruning-method dense \
+  --experiment-status candidate \
+  --model resnet18_sparse \
+  --checkpoint /content/drive/MyDrive/DominoSearch-artifacts/checkpoints/resnet18-dense.pth \
+  --n 1 --m 1 \
+  --dataset-format parquet \
+  --parquet-root /content/drive/MyDrive/DominoSearch-data/imagenet-1k \
+  --accuracy-batch-size 64 \
+  --workers 2 \
+  --device cuda \
+  --output /content/drive/MyDrive/DominoSearch-artifacts/results/dense-drive.json
+```
+
+JSON ghi lại root, glob, số shard và tổng byte để chứng minh các run dùng cùng dữ
+liệu. Mặc định validation kỳ vọng 50.000 sample. Dùng `--max-eval-samples 1000`
+chỉ cho smoke test; kết quả đó phải giữ trạng thái `debug`.
+
+Đọc từ mounted Drive tiện và bền qua lần reset runtime nhưng có thể chậm hơn disk
+local. Thời gian đọc dữ liệu là một phần của accuracy evaluation, không được trộn
+vào latency synthetic của model.
+
+## Đo đầy đủ với ImageFolder
 
 `/path/to/imagenet/val` phải có mỗi class là một thư mục con:
 
@@ -147,8 +169,14 @@ python benchmark/compare_results.py \
   results/dense.json \
   results/pruned-before-finetune.json \
   results/pruned-after-finetune.json \
-  --csv results/comparison.csv
+  --csv results/comparison.csv \
+  --markdown results/pruning-report.md \
+  --title "ResNet-18 pruning trên ImageNet"
 ```
+
+File Markdown chứa dense baseline, môi trường, bảng ΔTop-1/parameter/MAC/latency,
+và cảnh báo nếu dataset, sample count, device, batch size, warm-up hoặc iterations
+không khớp. Báo cáo vẫn phải ghi rõ host speedup không phải FPGA speedup.
 
 ## Google Colab và FPGA
 
