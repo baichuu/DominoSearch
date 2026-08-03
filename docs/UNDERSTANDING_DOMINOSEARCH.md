@@ -310,6 +310,11 @@ imagenet/
     └── ...
 ```
 
+Trên Colab, repo còn hỗ trợ opt-in `dataset-format=parquet` để stream các shard
+ImageNet đã tải trực tiếp từ Google Drive. Cách này tránh tạo 1,28 triệu file ảnh
+nhỏ và giữ nguyên loader ImageFolder/meta mặc định. Xem quy trình đầy đủ tại
+[`COLAB_DRIVE_PRUNING_WORKFLOW.md`](COLAB_DRIVE_PRUNING_WORKFLOW.md).
+
 ---
 
 ## 4. DominoSearch hoạt động như thế nào?
@@ -830,6 +835,10 @@ data: your/data/repo
 | `print_freq`   | Tần suất in log                        |
 
 Lưu ý file training dùng `train_root`, `train_source`, `val_root` và `val_source`, vì nó sử dụng dataset loader khác pha search.
+
+Khi dùng Parquet trên Drive, cả search và fine-tune nhận `parquet_root`, glob
+train/validation, sample count và shuffle buffer qua CLI. Các trường cũ vẫn được
+dùng mặc định nên không làm thay đổi thí nghiệm gốc.
 
 ---
 
