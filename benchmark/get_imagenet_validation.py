@@ -32,8 +32,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        required=True,
-        help="Destination ImageFolder directory, for example /content/imagenet-val.",
+        default=Path("/content/imagenet-val"),
+        help="Destination ImageFolder directory (default: /content/imagenet-val).",
     )
     parser.add_argument(
         "--cache-dir",
