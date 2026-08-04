@@ -92,6 +92,14 @@ parser.add_argument('--val-num-samples', type=int, default=50000)
 parser.add_argument('--shuffle-buffer', type=int, default=10000)
 parser.add_argument('--seed', type=int, default=42)
 parser.add_argument(
+    '--save-every-epoch',
+    action='store_true',
+    help=(
+        'write a resumable checkpoint after every epoch; disabled by default '
+        'to preserve the original epoch > 1 save schedule'
+    ),
+)
+parser.add_argument(
     '--data-workers',
     type=int,
     default=None,
@@ -355,7 +363,7 @@ def main():
             # remember best prec@1 and save checkpoint
             is_best = prec1 > best_prec1
             best_prec1 = max(prec1, best_prec1)
-            if epoch > 1:
+            if args.save_every_epoch or epoch > 1:
                 save_checkpoint(model_dir, {
                     'epoch': epoch + 1,
                     'model': args.model,
