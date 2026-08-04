@@ -1,5 +1,10 @@
 # Các hướng tối ưu model bằng pruning
 
+> Số liệu trước/sau fine-tune đã đo ngày 2026-08-04 nằm tại
+> [`PRUNING_EXPERIMENT_REPORT_T4.md`](PRUNING_EXPERIMENT_REPORT_T4.md). Tài liệu
+> này mô tả không gian nghiên cứu và các thí nghiệm tiếp theo; không dùng kỳ vọng
+> trong tài liệu này thay cho kết quả thực đo.
+
 ## 1. Mục tiêu
 
 Mục tiêu của dự án là giảm chi phí của model để model có thể triển khai trên phần
@@ -81,11 +86,12 @@ thường nhạy cảm với pruning.
 - layer nhạy có thể làm accuracy giảm mạnh;
 - layer ít nhạy chưa chắc đã được pruning đủ nhiều.
 
-### Giả thuyết cần kiểm tra
+### Kết quả hiện có và giả thuyết tiếp theo
 
-Uniform 2:4 có thể là điểm cân bằng đầu tiên giữa accuracy và độ thưa. Nếu phần
-cứng không hỗ trợ trực tiếp N:M thì MACs giảm theo lý thuyết nhưng latency thực tế
-có thể không giảm.
+Uniform 3:4 conservative sau fine-tune đạt 68,388% Top-1, giảm 23,49% parameter
+và 23,10% MAC hiệu dụng. Latency PyTorch cao hơn dense vì implementation tạo mask
+rồi vẫn gọi dense operator. Cần sweep 2:4/1:4 và chỉ đánh giá tốc độ sau khi có
+runtime khai thác N:M.
 
 ## 4. Hướng 2: DominoSearch mixed N:M pruning
 
@@ -142,10 +148,12 @@ Mỗi cấu hình N:M của từng loại layer được benchmark trên CPU/FPG
 lookup table hoặc huấn luyện cost predictor. DominoSearch sau đó tìm scheme dựa
 trên cost thực tế thay vì chỉ dựa vào FLOPs.
 
-### Giả thuyết cần kiểm tra
+### Kết quả hiện có và giả thuyết tiếp theo
 
-Tại cùng effective MACs, mixed N:M phải có Top-1 cao hơn uniform N:M. Nếu không,
-chi phí search chưa tạo ra lợi ích đủ lớn.
+Scheme params-23 hiện đạt 68,328% trước và 67,996% sau fine-tune, giảm 30,27%
+parameter nhưng chỉ 9,56% MAC. Nó chưa được so với Uniform tại cùng budget. Thí
+nghiệm tiếp theo phải đặt cùng effective MACs để kiểm tra mixed N:M có giữ Top-1
+tốt hơn hay không.
 
 ## 5. Hướng 3: Structured channel/filter pruning
 
@@ -186,10 +194,12 @@ Các tiêu chí xếp hạng channel nên thử:
 - residual connection làm việc xóa channel phức tạp;
 - pruning mạnh có thể làm mất accuracy nhanh hơn fine-grained N:M.
 
-### Giả thuyết cần kiểm tra
+### Kết quả hiện có và giả thuyết tiếp theo
 
-Structured pruning có thể giảm latency thực tế tốt hơn N:M trên phần cứng không hỗ
-trợ sparse operator, kể cả khi accuracy tại cùng tỷ lệ parameter thấp hơn một ít.
+Channel-10 L1 sau fine-tune đạt 66,672% Top-1, giảm 8,99% parameter và 10,16% MAC.
+Artifact hiện mới materialize zero trong tensor dense-shape, nên số latency gần
+dense chưa kiểm tra được lợi ích của model compact. Cần compact export trước khi
+kiểm tra giả thuyết runtime.
 
 ## 6. Hướng 4: Unstructured magnitude pruning
 
@@ -228,11 +238,12 @@ Các biến thể cần thử:
 - model có nhiều số 0 nhưng file và phép toán vẫn dense nếu không có sparse format;
 - không phải ứng viên triển khai tốt nhất nếu board không hỗ trợ unstructured sparsity.
 
-### Giả thuyết cần kiểm tra
+### Kết quả hiện có và giả thuyết tiếp theo
 
-Hướng này có thể đạt accuracy tốt nhất theo số non-zero nhưng không nhất thiết có
-latency tốt nhất. Nó chủ yếu là đối chứng để phân biệt “model thưa” và “model chạy
-nhanh thật”.
+Global magnitude 30% trước fine-tune đạt 69,218% Top-1, chỉ giảm 0,536 điểm so với
+dense, đồng thời giảm 28,63% parameter và 21,89% MAC hiệu dụng. Đây là điểm
+accuracy–complexity tốt nhất hiện có nhưng không giảm latency. Fine-tune LR 0.01
+làm accuracy giảm; cần thử LR `0.001` và `0.0001` trước khi tăng budget.
 
 ## 7. Ma trận thí nghiệm tối thiểu
 
@@ -275,17 +286,15 @@ Speedup         = latency_dense / latency_pruned
 Memory reduction= 1 - memory_pruned / memory_dense
 ```
 
-## 9. Thứ tự triển khai đề xuất
+## 9. Thứ tự thí nghiệm tiếp theo sau kết quả thực tế
 
-1. Hoàn thành `pruning-uniform-nm` để xác nhận pipeline và tạo baseline nhanh.
-2. Hoàn thành `pruning-domino-mixed-nm` và so với uniform tại cùng MAC budget.
-3. Triển khai `pruning-structured-channel` để kiểm tra speedup thật trên CPU/board.
-4. Dùng `pruning-unstructured-magnitude` làm đối chứng về accuracy và sparsity.
-5. Chọn 2–3 điểm Pareto tốt nhất để đo trên FPGA hoặc phần cứng mục tiêu.
-
-Kỳ vọng thực tế: mixed N:M có thể tốt nhất về cân bằng accuracy–sparsity, trong khi
-structured channel pruning có khả năng tốt hơn về latency trên phần cứng không có
-sparse kernel. Kết quả benchmark thực tế mới quyết định hướng cuối cùng.
+1. Tune unstructured global 30% với LR `0.001` và `0.0001`; giữ nguyên mask và
+   chỉ nhận checkpoint vượt 69,218% Top-1.
+2. Sweep unstructured 20–50% để có Pareto frontier thay vì chọn từ một điểm.
+3. Chạy Domino và Uniform ở cùng khoảng 23% MAC reduction để so công bằng.
+4. Thử structured ratio thấp hơn/ranking tốt hơn và compact export trước khi đo
+   runtime.
+5. Lặp latency nhiều lần trên cùng runtime; không gọi chênh lệch nhỏ là speedup.
 
 ## 10. Công cụ benchmark
 
