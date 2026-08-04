@@ -167,6 +167,12 @@ Fine-tune checkpoint có mask bằng `train_imagenet.py --initial-checkpoint ...
 --weight-mask-file ...`. Mask được kiểm tra đúng tên/shape, nhân vào gradient và
 được áp lại sau mỗi `optimizer.step`, nên weight đã prune không tự mọc lại.
 
+Với runtime dễ bị thu hồi như Colab, thêm `--save-every-epoch` để ghi checkpoint
+có thể resume sau mỗi epoch. Cờ này mặc định tắt, nên lịch lưu checkpoint gốc
+(chỉ lưu từ epoch thứ ba) không thay đổi nếu không yêu cầu. Có thể dùng một tập
+validation nhỏ trong quá trình fine-tune để checkpoint sớm, nhưng kết quả cuối
+vẫn phải chạy lại `benchmark_model.py` trên đủ 50.000 ảnh và ghi rõ budget train.
+
 ## Tạo bảng so sánh
 
 ```bash
