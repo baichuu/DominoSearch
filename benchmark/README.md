@@ -204,3 +204,11 @@ LUT và kích thước binary.
 Một kết luận “tối ưu hiệu quả” nên báo cáo đồng thời mức giảm effective MAC/param,
 chênh lệch Top-1 so với dense, và latency/throughput trên đúng phần cứng mục tiêu.
 Không nên chỉ dùng FLOPs/MACs để khẳng định model chắc chắn chạy nhanh hơn.
+
+Hardware-aware DominoSearch dùng profile từng layer và cost predictor được mô tả
+tại [`docs/HARDWARE_AWARE_DOMINOSEARCH.md`](../docs/HARDWARE_AWARE_DOMINOSEARCH.md).
+Profile T4 chỉ mô tả operator PyTorch/T4 đã đo; không được dùng làm bằng chứng cho
+CPU hoặc FPGA. Benchmark model trước/sau fine-tune vẫn phải dùng script trong thư
+mục này để kiểm tra accuracy và runtime end-to-end. Nếu cạnh scheme có sidecar
+`<scheme>.json`, benchmark kiểm tra scheme trong hai file khớp nhau và nhúng cả
+manifest cùng SHA-256 vào JSON kết quả.

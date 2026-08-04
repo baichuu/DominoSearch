@@ -148,6 +148,16 @@ Mỗi cấu hình N:M của từng loại layer được benchmark trên CPU/FPG
 lookup table hoặc huấn luyện cost predictor. DominoSearch sau đó tìm scheme dựa
 trên cost thực tế thay vì chỉ dựa vào FLOPs.
 
+Implementation trên nhánh này nằm ở:
+
+- `search/profile_layer_hardware.py`: đo từng `layer × N:M`;
+- `search/hardware_cost.py`: validate lookup, tính cost và fit predictor;
+- `search/find_mix_from_dense_imagenet.py --cost-source hardware`: đưa cost vào
+  layer-wise penalty và điều kiện dừng.
+
+Giao thức và ý nghĩa chi tiết nằm tại
+[`HARDWARE_AWARE_DOMINOSEARCH.md`](HARDWARE_AWARE_DOMINOSEARCH.md).
+
 ### Kết quả hiện có và giả thuyết tiếp theo
 
 Scheme params-23 hiện đạt 68,328% trước và 67,996% sau fine-tune, giảm 30,27%

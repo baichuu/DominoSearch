@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import json
 import math
 import os
@@ -193,6 +194,23 @@ def load_scheme(path: Path) -> dict[str, list[int]]:
             raise ValueError(f"Invalid N:M value for {layer}: {n}:{m}")
         scheme[layer] = [n, m]
     return scheme
+
+
+def load_scheme_manifest(path: Path, scheme: dict[str, list[int]]) -> dict[str, Any] | None:
+    manifest_path = Path(str(path) + ".json")
+    if not manifest_path.exists():
+        return None
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("scheme") != scheme:
+        raise ValueError(
+            f"Scheme manifest does not match scheme file: {manifest_path}"
+        )
+    digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    return {
+        "path": str(manifest_path.resolve()),
+        "sha256": digest,
+        "content": manifest,
+    }
 
 
 def apply_scheme(model: nn.Module, scheme: dict[str, list[int]]) -> None:
@@ -539,6 +557,12 @@ def main() -> None:
         torch.backends.cudnn.benchmark = True
 
     model, load_info = build_model(args)
+    applied_scheme = current_scheme(model)
+    scheme_manifest = (
+        load_scheme_manifest(args.scheme_file, applied_scheme)
+        if args.scheme_file
+        else None
+    )
     model = model.to(device).eval()
     loader = build_validation_loader(args, device)
     complexity = measure_complexity(model, device, args.input_size, args.density_source)
@@ -565,8 +589,9 @@ def main() -> None:
             "checkpoint_size_bytes": os.path.getsize(args.checkpoint) if args.checkpoint else None,
             "pretrained": args.pretrained,
             "scheme_file": str(args.scheme_file.resolve()) if args.scheme_file else None,
+            "scheme_manifest": scheme_manifest,
             "uniform_n_m": [args.n, args.m],
-            "applied_scheme": current_scheme(model),
+            "applied_scheme": applied_scheme,
             "layout": args.layout,
             "input_shape": [args.batch_size, 3, args.input_size, args.input_size],
             "checkpoint_load": load_info,

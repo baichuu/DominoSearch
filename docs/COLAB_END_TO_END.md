@@ -517,6 +517,46 @@ Target `params` không tương đương target MAC. Run đã báo cáo giảm 30
 parameter nhưng chỉ giảm 9,56% MAC; muốn so công bằng với Uniform, chạy thêm
 `--target-metric flops` ở budget MAC tương đương và lưu sang run/scheme mới.
 
+#### 10.2.1 Domino hardware-aware trên T4
+
+Profile mọi layer và ứng viên N:M trên đúng T4, batch triển khai 1:
+
+```bash
+!python search/profile_layer_hardware.py \
+  --model resnet18_sparse \
+  --checkpoint "$DS_CHECKPOINT_ROOT/resnet18-dense.pth" \
+  --m 16 --candidate-n 1 2 4 8 16 \
+  --layout NHWC --input-size 224 --batch-size 1 \
+  --device cuda --warmup 30 --iterations 100 --repeats 7 \
+  --latency-weight 1 --energy-weight 0 \
+  --bandwidth-weight 0 --memory-weight 0 \
+  --seed 42 \
+  --output "$DS_RESULT_ROOT/t4-resnet18-layer-cost.json"
+```
+
+Sau đó search với lookup đo thực:
+
+```bash
+!python search/find_mix_from_dense_imagenet.py \
+  --config search/script_resnet_ImageNet/configs/config_resnet18_img_mix_from_dense.yaml \
+  --initial-checkpoint "$DS_CHECKPOINT_ROOT/resnet18-dense.pth" \
+  --cost-source hardware \
+  --hardware-profile "$DS_RESULT_ROOT/t4-resnet18-layer-cost.json" \
+  --hardware-cost-mode lookup \
+  --target-metric hardware --target_sparsity 0.20 \
+  --dataset-format parquet --parquet-root "$DS_DATA_ROOT" \
+  --train-num-samples 50000 --val-num-samples 1000 \
+  --shuffle-buffer 10000 --data-workers 2 --seed 42 \
+  --model_dir "$DS_RUN_ROOT/domino-hardware-t4-lookup20" \
+  --scheme-output "$DS_SCHEME_ROOT/domino-hardware-t4-lookup20.txt"
+```
+
+Nếu measured PyTorch latency không giảm với bất kỳ N:M nào, không ép search đạt
+target. Khi đó dense là kết quả runtime đúng cho stack này; profile vẫn có giá trị
+để chứng minh mask+dense operator không khai thác sparsity. Predictor được audit
+qua trường `predictor.validation` trong JSON và có thể thử bằng
+`--hardware-cost-mode predictor` trong một run riêng.
+
 ### 10.3 Structured channel 10% L1
 
 ```bash
