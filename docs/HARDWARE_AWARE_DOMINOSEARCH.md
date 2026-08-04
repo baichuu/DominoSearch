@@ -110,6 +110,26 @@ số. Ví dụ ưu tiên latency 20%, bandwidth 40% và memory weight 40%:
 Đây là một objective khác latency-only và phải được ghi thành run riêng. Giảm
 composite cost không đồng nghĩa latency giảm.
 
+### Chọn scheme trực tiếp từ profile
+
+Khi gradient search không thể hoàn tất ổn định, có thể tạo một baseline xác định
+chỉ từ lookup table:
+
+```bash
+python search/select_scheme_from_hardware_profile.py \
+  --hardware-profile /path/to/t4-resnet18-nm-profile.json \
+  --output /path/to/schemes/hardware-profile-target3.txt \
+  --target-reduction 0.03 --loss-metric parameters \
+  --latency-weight 0.20 --energy-weight 0.00 \
+  --bandwidth-weight 0.40 --memory-weight 0.40
+```
+
+Selector giải bài toán multiple-choice Pareto: đạt cost reduction yêu cầu với
+ít parameter (hoặc MAC) bị loại nhất. Đây là **hardware-profile selection**,
+không phải kết quả gradient search của DominoSearch; parameter/MAC chỉ là proxy
+complexity, không phải predictor accuracy. File manifest cạnh scheme ghi rõ
+method, profile SHA-256, weights, target và reduction đạt được.
+
 ## 5. Giao thức kết quả đầy đủ
 
 Một kết quả hợp lệ cần:

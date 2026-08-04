@@ -388,6 +388,87 @@ class HardwareCostModel:
     def maximum_independent_reduction(self) -> float:
         return self.reduction(self.best_independent_scheme())
 
+    def minimum_loss_scheme(
+        self,
+        target_reduction: float,
+        loss_metric: str = "parameters",
+    ) -> dict[str, list[int]]:
+        """Meet a cost target with minimum theoretical pruning loss.
+
+        This is a deterministic multiple-choice Pareto search. ``parameters``
+        and ``macs`` are complexity proxies, not accuracy predictors.
+        """
+
+        if not 0.0 < target_reduction < 1.0:
+            raise ValueError("Target hardware-cost reduction must be in (0, 1).")
+        if loss_metric not in {"parameters", "macs"}:
+            raise ValueError("Loss metric must be 'parameters' or 'macs'.")
+
+        dense_scheme = {
+            name: [
+                max(int(candidate["m"]) for candidate in layer["candidates"]),
+                max(int(candidate["m"]) for candidate in layer["candidates"]),
+            ]
+            for name, layer in self.layers.items()
+        }
+        dense_cost = self.total_cost(dense_scheme)
+        required_saving = target_reduction * dense_cost
+        # cost saving, primary loss, secondary loss, N choices
+        frontier: list[tuple[float, float, float, tuple[int, ...]]] = [
+            (0.0, 0.0, 0.0, ())
+        ]
+        layer_items = list(self.layers.items())
+        for name, layer in layer_items:
+            dense_n, dense_m = dense_scheme[name]
+            dense_layer_cost = self.cost(name, dense_n, dense_m)
+            features = layer["features"]
+            dense_parameters = float(features["dense_parameters"])
+            dense_macs = float(features["dense_macs"])
+            candidates = []
+            for candidate in layer["candidates"]:
+                n, m = int(candidate["n"]), int(candidate["m"])
+                density = n / m
+                parameter_loss = dense_parameters * (1.0 - density)
+                mac_loss = dense_macs * (1.0 - density)
+                primary, secondary = (
+                    (parameter_loss, mac_loss)
+                    if loss_metric == "parameters"
+                    else (mac_loss, parameter_loss)
+                )
+                candidates.append(
+                    (dense_layer_cost - self.cost(name, n, m), primary, secondary, n)
+                )
+
+            expanded = [
+                (saving + ds, loss + dl, secondary + dsecondary, choices + (n,))
+                for saving, loss, secondary, choices in frontier
+                for ds, dl, dsecondary, n in candidates
+            ]
+            expanded.sort(key=lambda state: (-state[0], state[1], state[2], state[3]))
+            frontier = []
+            best_loss: tuple[float, float] | None = None
+            for state in expanded:
+                state_loss = (state[1], state[2])
+                if best_loss is None or state_loss < best_loss:
+                    frontier.append(state)
+                    best_loss = state_loss
+
+        feasible = [state for state in frontier if state[0] + 1e-12 >= required_saving]
+        if not feasible:
+            maximum = self.maximum_independent_reduction()
+            raise ValueError(
+                f"Target reduction {target_reduction:.6f} is infeasible; "
+                f"maximum independent reduction is {maximum:.6f}."
+            )
+        selected = min(
+            feasible,
+            key=lambda state: (state[1], state[2], state[0] - required_saving, state[3]),
+        )
+        return {
+            name: [n, dense_scheme[name][1]]
+            for (name, _), n in zip(layer_items, selected[3])
+        }
+
     def normalization(self, scheme: dict[str, list[int]]) -> dict[str, float]:
         costs = {
             name: self.cost(name, int(n_m[0]), int(n_m[1]))

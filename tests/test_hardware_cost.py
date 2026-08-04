@@ -121,6 +121,17 @@ class HardwareCostTest(unittest.TestCase):
                 }
             )
 
+    def test_minimum_loss_scheme_meets_target(self):
+        model = HardwareCostModel(self.write_profile(make_profile()), mode="lookup")
+        scheme = model.minimum_loss_scheme(0.30, "parameters")
+        self.assertGreaterEqual(model.reduction(scheme), 0.30)
+        self.assertEqual(set(scheme), set(model.layers))
+
+    def test_minimum_loss_scheme_rejects_unreachable_target(self):
+        model = HardwareCostModel(self.write_profile(make_profile()), mode="lookup")
+        with self.assertRaisesRegex(ValueError, "infeasible"):
+            model.minimum_loss_scheme(0.99)
+
 
 if __name__ == "__main__":
     unittest.main()
