@@ -83,10 +83,13 @@ python benchmark/benchmark_model.py \
   --output /content/drive/MyDrive/DominoSearch-artifacts/results/dense-resnet18-drive.json
 ```
 
-Kết quả tham chiếu đã đo trước đây là Top-1 `69,760%`, Top-5 khoảng `89,08%`,
+Kết quả baseline đã audit ngày 2026-08-04 là Top-1 `69,754%`, Top-5 `89,078%`,
 11,689512 triệu parameter và 1,814073344 tỷ MAC/sample. Run mới chỉ hợp lệ nếu
 checkpoint load không thiếu key, đủ 50.000 validation sample và accuracy gần mốc
 này.
+
+Bảng thực nghiệm đầy đủ nằm tại
+[`PRUNING_EXPERIMENT_REPORT_T4.md`](PRUNING_EXPERIMENT_REPORT_T4.md).
 
 ## 3. Smoke test trước khi chạy dài
 
