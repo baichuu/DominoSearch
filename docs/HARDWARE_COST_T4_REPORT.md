@@ -380,7 +380,14 @@ search/profile_layer_hardware.py
 search/hardware_cost.py
 search/select_scheme_from_hardware_profile.py
 search/find_mix_from_dense_imagenet.py
+search/profile_layer_sensitivity.py
+search/layer_sensitivity.py
+search/select_sensitivity_aware_scheme.py
 ```
+
+Quy trình sensitivity-aware mới và protocol chuyển sang Jetson Nano được chuẩn
+bị tại [`DOMINO_MIXED_PRE_BOARD_PLAN.md`](DOMINO_MIXED_PRE_BOARD_PLAN.md). Phần
+này là implementation sẵn sàng chạy, chưa phải kết quả thực nghiệm mới.
 
 Artifact trên Google Drive:
 

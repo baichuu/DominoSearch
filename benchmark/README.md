@@ -212,3 +212,11 @@ CPU hoặc FPGA. Benchmark model trước/sau fine-tune vẫn phải dùng scrip
 mục này để kiểm tra accuracy và runtime end-to-end. Nếu cạnh scheme có sidecar
 `<scheme>.json`, benchmark kiểm tra scheme trong hai file khớp nhau và nhúng cả
 manifest cùng SHA-256 vào JSON kết quả.
+
+## Mixed N:M có sensitivity và hardware cost
+
+Nhánh `pruning-domino-mixed-nm` có thêm pipeline đo mức giảm accuracy khi prune
+từng layer và selector kết hợp sensitivity với hardware lookup. Hướng dẫn Colab,
+lệnh đầy đủ và protocol Jetson Nano nằm tại
+[`docs/DOMINO_MIXED_PRE_BOARD_PLAN.md`](../docs/DOMINO_MIXED_PRE_BOARD_PLAN.md).
+Pipeline này không thay đổi benchmark dense hay DominoSearch mặc định.
