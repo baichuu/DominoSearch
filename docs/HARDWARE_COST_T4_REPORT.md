@@ -210,7 +210,168 @@ tốt và không tạo runtime speedup trên T4.
 Hướng cải tiến trực tiếp là thêm sensitivity/accuracy loss vào selector, giới hạn
 N tối thiểu cho các layer nhạy và so sánh với Uniform N:M tại cùng effective MAC.
 
-## 9. File nguồn và khả năng truy vết
+## 9. Hướng nghiên cứu tiếp theo
+
+### 9.1 Vấn đề cần giải quyết
+
+Cost hiện tại trả lời cấu hình nào giảm latency, bandwidth hoặc memory, nhưng chưa
+đánh giá pruning layer đó làm accuracy giảm bao nhiêu. Vì vậy selector đã chọn
+`1:16` cho một số layer nhạy. Cấu hình này xóa 15 trong mỗi 16 weight, làm Top-1
+giảm từ 69,754% xuống 0,250% trước fine-tune.
+
+Phiên bản tiếp theo cần tối ưu đồng thời hai mục tiêu:
+
+1. giảm hardware cost;
+2. giới hạn tổn thất accuracy.
+
+### 9.2 Đo sensitivity cho từng layer
+
+Sensitivity biểu diễn mức độ accuracy hoặc loss bị ảnh hưởng khi chỉ prune một
+layer. Với mỗi cặp `layer × N:M`:
+
+1. bắt đầu từ cùng dense checkpoint;
+2. chỉ áp dụng N:M cho layer đang đánh giá;
+3. giữ tất cả layer còn lại dense;
+4. đánh giá trên cùng validation subset 1.000–5.000 ảnh;
+5. ghi lại mức tăng loss và mức giảm Top-1;
+6. khôi phục dense checkpoint trước khi đo cấu hình kế tiếp.
+
+Hai định nghĩa có thể lưu đồng thời:
+
+```text
+SensitivityLoss_i(N:M) = Loss_pruned_i(N:M) - Loss_dense
+
+SensitivityTop1_i(N:M) = Top1_dense - Top1_pruned_i(N:M)
+```
+
+Giá trị càng lớn nghĩa là layer càng nhạy và cần được giữ dense hoặc chỉ prune
+nhẹ. Artifact sensitivity phải ghi checkpoint, dataset subset, seed, preprocessing,
+scheme tạm thời và kết quả của mọi layer.
+
+### 9.3 Kết hợp sensitivity với hardware cost
+
+Objective mới có thể dùng tổng có trọng số:
+
+```text
+Score_i(N:M) = HardwareCost_i(N:M) + λ × Sensitivity_i(N:M)
+```
+
+Trong đó `λ` điều khiển mức ưu tiên bảo vệ accuracy. `λ` lớn tạo scheme an toàn
+hơn; `λ` nhỏ ưu tiên giảm tài nguyên mạnh hơn.
+
+Một lựa chọn khác là xếp hạng theo lợi ích trên tổn thất:
+
+```text
+Benefit_i(N:M)
+    = HardwareCostReduction_i(N:M) / (Sensitivity_i(N:M) + ε)
+```
+
+Cấu hình tốt phải giảm được nhiều cost nhưng chỉ gây sensitivity nhỏ. Cả hai cách
+đều phải được benchmark end-to-end; score không thay thế accuracy thực tế.
+
+### 9.4 Giới hạn an toàn cho search
+
+Không nên cho selector dùng `1:16` tự do trong lần thử đầu. Tập ứng viên an toàn:
+
+```text
+8:16, 12:16, 16:16
+```
+
+Hoặc với pattern nhỏ hơn:
+
+```text
+2:4, 3:4, 4:4
+```
+
+Các ràng buộc ban đầu:
+
+- giữ convolution đầu tiên dense;
+- giữ linear cuối dense;
+- không dùng cấu hình thấp hơn `8:16` cho layer nhạy;
+- chỉ thay đổi một số ít layer trong mỗi bước search;
+- loại scheme nếu Top-1 trên validation subset giảm quá ngưỡng;
+- fail rõ ràng nếu target cost không khả thi, không tự chọn scheme phá accuracy.
+
+### 9.5 Search với accuracy budget
+
+Bài toán nên được viết thành tối ưu có ràng buộc:
+
+```text
+minimize HardwareCost(scheme)
+
+subject to:
+    EstimatedTop1(scheme) >= Top1_dense - AccuracyBudget
+    MACReduction(scheme)  >= TargetMACReduction
+```
+
+Thử nghiệm đầu có thể dùng:
+
+```text
+AccuracyBudget     = 1,0 điểm Top-1
+TargetMACReduction = khoảng 23%
+```
+
+Với dense Top-1 69,754%, scheme chỉ được chấp nhận ở bước search nhanh nếu Top-1
+ước lượng hoặc subset không thấp hơn 68,754%. Kết luận cuối vẫn phải dựa trên
+benchmark đủ 50.000 validation ảnh.
+
+### 9.6 So sánh công bằng với Uniform N:M
+
+Uniform 3:4 hiện là mốc phù hợp:
+
+| Scheme | Top-1 sau FT % | MAC giảm % |
+| --- | ---: | ---: |
+| Uniform 3:4 | 68,388 | 23,10 |
+| Hardware-aware hiện tại | 51,962 | 23,92 |
+
+Hai scheme có MAC reduction gần nhau, nhưng hardware-aware hiện mất accuracy lớn
+hơn. Phiên bản mới phải được tìm ở cùng budget khoảng 23% MAC để kiểm tra mixed
+N:M có phân bổ sparsity tốt hơn Uniform hay không.
+
+### 9.7 Fine-tune và tiêu chí nhận kết quả
+
+Sau khi tìm được scheme an toàn hơn:
+
+- benchmark đủ 50.000 ảnh trước fine-tune;
+- fine-tune với learning rate ban đầu `0,001` thay vì `0,01`;
+- giữ mask cố định trong thử nghiệm đầu;
+- dùng cùng 3 epoch × 50.000 training sample;
+- lưu và đánh giá checkpoint từng epoch;
+- xác nhận sparsity không đổi sau fine-tune;
+- chỉ nhận checkpoint nếu accuracy tăng so với trước fine-tune.
+
+Nếu cần, gradual pruning có thể là thí nghiệm riêng sau khi fixed-mask fine-tune
+đã có baseline. Không trộn hai cơ chế vào cùng một kết quả.
+
+### 9.8 Tiêu chí thành công đề xuất
+
+Mục tiêu cho vòng thí nghiệm tiếp theo:
+
+```text
+MAC reduction:              khoảng 23%
+Top-1 trước fine-tune:      >= 67,0%
+Top-1 sau fine-tune:        >= 68,4%
+Sai lệch sparsity yêu cầu:  0%
+```
+
+Mốc Top-1 sau fine-tune 68,4% được chọn để ít nhất cạnh tranh với Uniform 3:4
+68,388% ở cùng MAC budget. Runtime chỉ được gọi là cải thiện nếu median/P95
+latency và throughput được đo tốt hơn dense qua nhiều lần lặp.
+
+### 9.9 Thứ tự triển khai
+
+1. Viết profiler sensitivity cho từng `layer × N:M`.
+2. Sinh sensitivity lookup table có provenance đầy đủ.
+3. Thêm sensitivity term và accuracy budget vào selector.
+4. Áp dụng boundary protection và giới hạn N tối thiểu.
+5. Search scheme ở khoảng 23% MAC reduction.
+6. Chạy validation subset để loại scheme không đạt accuracy budget.
+7. Benchmark scheme còn lại trên đủ 50.000 ảnh trước fine-tune.
+8. Fine-tune với learning rate thấp và mask cố định.
+9. Benchmark đủ 50.000 ảnh sau fine-tune.
+10. So sánh trực tiếp với dense và Uniform 3:4 bằng cùng protocol.
+
+## 10. File nguồn và khả năng truy vết
 
 Code chính:
 
