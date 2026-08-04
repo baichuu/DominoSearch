@@ -65,6 +65,12 @@ parser.add_argument('--label_smoothing', default=0.0,type=float)
 parser.add_argument('--momentum', default=0.9,type=float)
 parser.add_argument('--base_lr', default=0.1,type=float)
 parser.add_argument('--weight_decay', default=0.00005,type=float)
+parser.add_argument(
+    '--decay',
+    default=0.002,
+    type=float,
+    help='sparse weight-penalty coefficient (the original ResNet configs use 0.002)',
+)
 parser.add_argument('--model_dir', type=str,  default='resnet56_cifar/resnet56_M')
 parser.add_argument('--resume_from', default='', help='resume_from')
 parser.add_argument(
@@ -128,6 +134,8 @@ def main():
     for key in config:
         for k, v in config[key].items():
             setattr(args, k, v)
+    if args.decay < 0.0:
+        raise ValueError('--decay cannot be negative')
     if args.data_workers is not None:
         if args.data_workers < 0:
             raise ValueError('--data-workers cannot be negative')
