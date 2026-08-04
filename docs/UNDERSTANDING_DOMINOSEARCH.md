@@ -312,8 +312,8 @@ imagenet/
 
 Trên Colab, repo còn hỗ trợ opt-in `dataset-format=parquet` để stream các shard
 ImageNet đã tải trực tiếp từ Google Drive. Cách này tránh tạo 1,28 triệu file ảnh
-nhỏ và giữ nguyên loader ImageFolder/meta mặc định. Xem quy trình đầy đủ tại
-[`COLAB_DRIVE_PRUNING_WORKFLOW.md`](COLAB_DRIVE_PRUNING_WORKFLOW.md).
+nhỏ và giữ nguyên loader ImageFolder/meta mặc định. Lệnh benchmark và cấu trúc
+dataset được duy trì tại [`benchmark/README.md`](../benchmark/README.md).
 
 ---
 
