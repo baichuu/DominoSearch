@@ -86,6 +86,10 @@ parser.add_argument(
     default='lookup',
     help='use exact measured rows or the fitted profile predictor',
 )
+parser.add_argument('--hardware-latency-weight', type=float, default=None)
+parser.add_argument('--hardware-energy-weight', type=float, default=None)
+parser.add_argument('--hardware-bandwidth-weight', type=float, default=None)
+parser.add_argument('--hardware-memory-weight', type=float, default=None)
 parser.add_argument(
     '--erk-weight',
     type=float,
@@ -189,6 +193,18 @@ def configure_search_objective():
         raise ValueError('--target-metric hardware requires --cost-source hardware.')
     if args.cost_source == 'hardware' and not args.hardware_profile:
         raise ValueError('--hardware-profile is required for hardware cost.')
+    hardware_weight_values = (
+        args.hardware_latency_weight,
+        args.hardware_energy_weight,
+        args.hardware_bandwidth_weight,
+        args.hardware_memory_weight,
+    )
+    if any(value is not None for value in hardware_weight_values) and not all(
+        value is not None for value in hardware_weight_values
+    ):
+        raise ValueError(
+            'Specify all four --hardware-*-weight values or none of them.'
+        )
 
 
 def git_value(*arguments):
@@ -288,9 +304,18 @@ def main():
 
     global hardware_cost_model
     if args.cost_source == 'hardware':
+        hardware_weights = None
+        if args.hardware_latency_weight is not None:
+            hardware_weights = {
+                'latency_ms': args.hardware_latency_weight,
+                'energy_mj': args.hardware_energy_weight,
+                'bandwidth_bytes': args.hardware_bandwidth_weight,
+                'memory_bytes': args.hardware_memory_weight,
+            }
         hardware_cost_model = HardwareCostModel(
             args.hardware_profile,
             mode=args.hardware_cost_mode,
+            weights=hardware_weights,
         )
         hardware_model = hardware_cost_model.profile['model']
         if hardware_model.get('name') != args.model:

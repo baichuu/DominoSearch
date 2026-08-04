@@ -557,6 +557,11 @@ target. Khi đó dense là kết quả runtime đúng cho stack này; profile v�
 qua trường `predictor.validation` trong JSON và có thể thử bằng
 `--hardware-cost-mode predictor` trong một run riêng.
 
+Muốn chạy objective đa mục tiêu từ cùng profile, truyền đủ bốn cờ
+`--hardware-latency-weight`, `--hardware-energy-weight`,
+`--hardware-bandwidth-weight`, `--hardware-memory-weight`. Run này phải có tên
+khác và không được diễn giải composite reduction thành latency speedup.
+
 ### 10.3 Structured channel 10% L1
 
 ```bash

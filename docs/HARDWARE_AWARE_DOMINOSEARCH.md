@@ -97,6 +97,19 @@ Search manifest lưu SHA-256 của profile, thiết bị, cost weights, predicto
 validation, scheme và reduction đạt được. Profile phải khớp chính xác toàn bộ
 sparse layer và đủ các ứng viên `1/2/4/8/16:16` khi dùng lookup.
 
+Có thể tái sử dụng cùng số đo nhưng đổi objective bằng cách truyền đủ bốn trọng
+số. Ví dụ ưu tiên latency 20%, bandwidth 40% và memory weight 40%:
+
+```bash
+--hardware-latency-weight 0.20 \
+--hardware-energy-weight 0.00 \
+--hardware-bandwidth-weight 0.40 \
+--hardware-memory-weight 0.40
+```
+
+Đây là một objective khác latency-only và phải được ghi thành run riêng. Giảm
+composite cost không đồng nghĩa latency giảm.
+
 ## 5. Giao thức kết quả đầy đủ
 
 Một kết quả hợp lệ cần:
