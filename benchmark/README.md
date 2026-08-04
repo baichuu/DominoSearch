@@ -91,6 +91,11 @@ JSON ghi lại root, glob, số shard và tổng byte để chứng minh các ru
 liệu. Mặc định validation kỳ vọng 50.000 sample. Dùng `--max-eval-samples 1000`
 chỉ cho smoke test; kết quả đó phải giữ trạng thái `debug`.
 
+Các giới hạn `--train-num-samples` và `--val-num-samples` được chia thành quota
+không chồng lặp giữa rank/worker. Mỗi worker dừng đúng quota của nó, nên độ dài
+DataLoader và số iteration của scheduler vẫn khớp khi chạy smoke test nhiều
+worker.
+
 Đọc từ mounted Drive tiện và bền qua lần reset runtime nhưng có thể chậm hơn disk
 local. Thời gian đọc dữ liệu là một phần của accuracy evaluation, không được trộn
 vào latency synthetic của model.
