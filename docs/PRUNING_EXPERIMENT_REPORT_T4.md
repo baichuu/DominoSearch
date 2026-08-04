@@ -1,6 +1,6 @@
 # Báo cáo thực nghiệm các hướng pruning ResNet-18 trên Tesla T4
 
-Ngày tổng hợp: 2026-08-04.
+Ngày tổng hợp: 2026-08-05.
 
 ## 1. Mục tiêu và phạm vi
 
@@ -12,9 +12,10 @@ Báo cáo trả lời ba câu hỏi bằng số liệu thực tế:
    hay không?
 
 Phạm vi gồm dense baseline và bốn hướng pruning của repository: Uniform N:M,
-Domino mixed N:M, structured channel L1 và unstructured global magnitude. Mỗi
-hướng có hai mốc: ngay sau pruning và sau fine-tune giới hạn. Báo cáo không trộn
-quantization, distillation hoặc thay kiến trúc.
+Domino mixed N:M, structured channel L1 và unstructured global magnitude. Phần
+Domino có thêm một scheme chọn theo profile phần cứng T4. Mỗi hướng có hai mốc:
+ngay sau pruning và sau fine-tune giới hạn. Báo cáo không trộn quantization,
+distillation hoặc thay kiến trúc.
 
 ## 2. Thuật ngữ dùng trong bảng
 
@@ -32,8 +33,8 @@ quantization, distillation hoặc thay kiến trúc.
 
 ## 3. Giao thức và kiểm tra tính hợp lệ
 
-Tất cả chín JSON trong bảng đã được audit với cùng các điều kiện có thể kiểm
-chứng từ artifact:
+Tất cả 11 JSON benchmark trong bảng đã được audit với cùng các điều kiện có thể
+kiểm chứng từ artifact:
 
 - `resnet18_sparse`, input `1 × 3 × 224 × 224`;
 - ImageNet validation đủ 50.000 ảnh;
@@ -78,6 +79,8 @@ làm giảm Top-1. Peak memory dùng MB thập phân.
 | Dense                     | Baseline  |  69,754 |  89,078 |  +0,000 |          — |         0,00 |       0,00 |     3,725 |  5,281 |   268,44 |   93,19 |
 | Domino mixed N:M          | Trước FT  |  68,328 |  88,356 |  -1,426 |          — |        30,27 |       9,56 |     8,577 |  9,370 |   116,59 |  114,06 |
 | Domino mixed N:M          | Sau FT    |  67,996 |  88,168 |  -1,758 |     -0,332 |        30,27 |       9,56 |     8,197 |  8,705 |   122,00 |  114,06 |
+| HW-profile mixed N:M      | Trước FT  |   0,250 |   0,900 | -69,504 |          — |        37,22 |      23,92 |     6,709 |  7,272 |   149,05 |  113,96 |
+| HW-profile mixed N:M      | Sau FT    |  51,962 |  77,920 | -17,792 |    +51,712 |        37,22 |      23,92 |     6,923 |  7,954 |   144,45 |  113,96 |
 | Uniform 3:4               | Trước FT  |  66,094 |  86,856 |  -3,660 |          — |        23,49 |      23,10 |    22,230 | 23,531 |    44,98 |  114,06 |
 | Uniform 3:4               | Sau FT    |  68,388 |  88,288 |  -1,366 |     +2,294 |        23,49 |      23,10 |    22,761 | 24,265 |    43,94 |  114,06 |
 | Structured channel 10% L1 | Trước FT  |  51,066 |  75,698 | -18,688 |          — |         8,99 |      10,16 |     3,742 |  4,209 |   267,25 |   93,19 |
@@ -126,7 +129,44 @@ fine-tune hiện tại không cải thiện checkpoint. Chưa thể kết luận
 Uniform nói chung vì hai run không có cùng parameter/MAC budget; chỉ có thể nói
 Uniform 3:4 tốt hơn ở checkpoint sau fine-tune của thí nghiệm hiện tại.
 
-### 6.3 Structured channel 10% theo L1
+### 6.3 Domino mixed N:M theo hardware profile T4
+
+**Cách đo cost.** Profiler đo 21 layer với năm ứng viên `1/2/4/8/16:16`, tổng
+105 phép đo trên Tesla T4. Mỗi phép đo dùng batch 1, warm-up 30, 100 iteration
+và bảy repeat. Không có một cấu hình sparse nào trong 84 cấu hình sparse có
+latency layer thấp hơn cấu hình dense cùng layer. Vì implementation vẫn tạo mask
+rồi gọi dense operator, latency-only lookup chọn dense cho cả 21 layer.
+
+Energy không được đo và có trọng số 0. Bandwidth và memory là byte ước lượng từ
+shape, effective weight và activation, không phải counter phần cứng. Predictor
+ridge được validation leave-one-layer-out trên 105 mẫu nhưng còn sai số lớn:
+latency MAE 0,255 ms, MAPE 69,85%, R² 0,577; bandwidth MAPE 43,97%, R² 0,446;
+memory MAPE 47,28%, R² 0,689. Vì vậy scheme cuối dùng lookup đầy đủ, không dùng
+predictor để suy diễn.
+
+**Cách chọn scheme.** Objective thử nghiệm dùng trọng số latency/bandwidth/memory
+`0,2/0,4/0,4`, target giảm composite cost 3% và tối thiểu hóa parameter bị loại.
+Selector multiple-choice đạt composite reduction dự đoán 3,102% bằng cách đặt
+`1:16` cho `SparseConv11`, `SparseConv13`, `SparseConv14`, `SparseConv16` và
+`Linear0`; 16 layer còn lại giữ `16:16`. Đây là hardware-profile selector xác
+định, không phải gradient search DominoSearch. Các lần gradient search đọc dữ
+liệu qua Drive FUSE bị lỗi I/O trước khi sinh scheme hợp lệ và được loại như debug
+run; pipeline sau đó đọc dataset local và chỉ dùng `rclone` để lưu artifact.
+
+**Kết quả.** Pruning trực tiếp làm Top-1 còn 0,250%. Fine-tune 3 epoch × 50.000
+sample phục hồi 51,712 điểm lên 51,962%, nhưng vẫn kém dense 17,792 điểm. Parameter
+và MAC hiệu dụng giảm 37,22% và 23,92%. Scheme này prune quá mạnh một số layer
+nhạy, cho thấy giảm một composite proxy nhỏ không bảo đảm giữ accuracy.
+
+**Runtime và kết luận.** Sau fine-tune, median latency 6,923 ms chậm hơn dense
+3,725 ms; throughput giảm từ 268,44 xuống 144,45 sample/s và peak memory tăng.
+Do đó thí nghiệm chứng minh pipeline cost theo layer hoạt động và cho phép bác bỏ
+một scheme không tốt bằng dữ liệu thực, nhưng không chứng minh model đã nhanh hơn
+hay tối ưu hơn. Trên stack T4 này, dense vẫn nằm trên Pareto frontier latency.
+Muốn dùng cho FPGA/board phải profile lại bằng operator/runtime và counter của
+phần cứng đó.
+
+### 6.4 Structured channel 10% theo L1
 
 **Cách tối ưu.** Hidden channel được xếp hạng bằng L1 norm rồi materialize thành
 zero; mask cố định ngăn weight mọc lại trong fine-tune. Residual output shape được
@@ -144,7 +184,7 @@ năng phục hồi bằng fine-tune, nhưng chưa phải model structured compac
 điểm accuracy–complexity cạnh tranh. Cần compact export và sweep tỷ lệ nhỏ hơn
 hoặc ranking tốt hơn trước khi đánh giá lại runtime.
 
-### 6.4 Unstructured global magnitude 30%
+### 6.5 Unstructured global magnitude 30%
 
 **Cách tối ưu.** Toàn bộ weight đủ điều kiện được xếp hạng chung theo trị tuyệt
 đối; 30% weight nhỏ nhất bị zero hóa. Global threshold cho phép layer nhạy giữ
@@ -186,6 +226,7 @@ bị.
 |    2 | Uniform 3:4               |  68,388 |  -1,366 |        23,49 |      23,10 |
 |    3 | Domino mixed N:M          |  67,996 |  -1,758 |        30,27 |       9,56 |
 |    4 | Structured channel 10% L1 |  66,672 |  -3,082 |         8,99 |      10,16 |
+|    5 | HW-profile mixed N:M      |  51,962 | -17,792 |        37,22 |      23,92 |
 
 ### 7.3 Những điều dữ liệu chưa chứng minh
 
@@ -194,6 +235,8 @@ bị.
   đầy đủ.
 - Chưa có kết quả full fine-tune ImageNet; kết luận sau fine-tune chỉ áp dụng cho
   budget 3 epoch × 50.000 sample.
+- Predictor phần cứng hiện chưa đủ chính xác để thay lookup; profile không có
+  energy và bandwidth/memory mới là ước lượng theo tensor.
 - Checkpoint có nhiều zero không tự nhỏ hơn vì tensor vẫn được lưu dense; file
   training còn chứa optimizer state.
 
@@ -224,6 +267,9 @@ structured-channel10-l1-before-20260804.json
 structured-channel10-l1-after-train50k-20260804.json
 unstructured-global30-before-20260804.json
 unstructured-global30-after-train50k-20260804.json
+t4-resnet18-layer-cost-latency-20260805.json
+hardware-profile-selector-target3-before-20260805.json
+hardware-profile-selector-target3-after-20260805.json
 ```
 
 Checkpoint sau fine-tune được truy vết bằng SHA-256:
@@ -234,6 +280,7 @@ Checkpoint sau fine-tune được truy vết bằng SHA-256:
 | Uniform 3:4               | `00d5f5b31fdb828e7623b45ec3b96a85cc298bc14a29866ab12814cbb3eff864` |
 | Structured channel 10% L1 | `4c6a4d131516b687fdc3dd94fcb417d92a3e3c9fccdb1ad1524f2452cb388913` |
 | Unstructured global 30%   | `044acb2472cab120b63082bf46b6c73701a848a9c8590db6e6b73337324d2d50` |
+| HW-profile mixed N:M      | `d0489224d1c67f184869ce11d05f579a81cca3b61590a8f4a24ab7749520c02a` |
 
 Uniform được resume sau epoch 1; structured và unstructured được resume từ
 checkpoint epoch 2 do session/runtime bị gián đoạn. Manifest cuối đánh dấu hoàn
@@ -260,9 +307,10 @@ Google Drive/MyDrive/DominoSearch-artifacts/
 | Dense/shared           | `master`                         | `d8254f6`             | `c3d022f` (benchmark baseline) |
 | Uniform N:M            | `pruning-uniform-nm`             | `59ed0b1`             | `78f79e7`                      |
 | Domino mixed N:M       | `pruning-domino-mixed-nm`        | `956077e`, `77f4aac`  | `025de97`                      |
+| HW-profile mixed N:M    | `pruning-domino-mixed-nm`        | `64d557e`, `c70d16b`  | `f2b57aa`                      |
 | Structured channel     | `pruning-structured-channel`     | `f12b328`             | `9cce258`                      |
 | Unstructured magnitude | `pruning-unstructured-magnitude` | `d47df96`             | `142aa66`                      |
 
 CSV máy đọc và validity audit được lưu trong thư mục `reports/` trên Drive. Chỉ
-chín candidate run vượt kiểm tra tính hợp lệ mới được đưa vào bảng; debug run bị
+11 candidate/final run vượt kiểm tra tính hợp lệ mới được đưa vào bảng; debug run bị
 loại khỏi kết luận.

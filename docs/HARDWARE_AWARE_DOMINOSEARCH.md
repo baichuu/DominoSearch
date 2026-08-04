@@ -147,3 +147,26 @@ Một kết quả hợp lệ cần:
 Nếu không có cấu hình sparse nào giảm measured latency cost trên stack hiện tại,
 kết luận đúng là “dense nằm trên Pareto frontier của runtime này”, không được đổi
 sang MAC rồi vẫn gọi đó là hardware speedup.
+
+## 6. Kết quả T4 ngày 2026-08-05
+
+Profile thực tế gồm 21 layer × 5 ứng viên `1/2/4/8/16:16` (105 điểm), batch 1,
+warm-up 30, 100 iteration và bảy repeat. Không có cấu hình sparse nào giảm
+measured layer latency so với dense cùng layer. Energy không được đo. Predictor
+latency leave-one-layer-out có MAE 0,255 ms, MAPE 69,85% và R² 0,577, nên kết quả
+cuối dùng lookup thay vì predictor.
+
+Selector với trọng số latency/bandwidth/memory `0,2/0,4/0,4`, target composite
+3% và parameter loss đã chọn `1:16` cho bốn convolution sâu và linear cuối. Nó
+đạt composite reduction dự đoán 3,102%, parameter reduction 37,22% và MAC
+reduction 23,92%. Benchmark đủ 50.000 ảnh cho kết quả:
+
+| Mốc | Top-1 % | Top-5 % | Median ms | P95 ms | sample/s |
+| --- | ------: | ------: | --------: | -----: | -------: |
+| Trước fine-tune | 0,250 | 0,900 | 6,709 | 7,272 | 149,05 |
+| Sau 3 epoch × 50.000 sample | 51,962 | 77,920 | 6,923 | 7,954 | 144,45 |
+
+Dense cùng protocol đạt Top-1 69,754%, median 3,725 ms và 268,44 sample/s. Vì
+vậy scheme này không được gọi là tối ưu hay nhanh hơn: nó chỉ chứng minh pipeline
+đo cost/chọn scheme hoạt động, đồng thời cho thấy objective phần cứng phải có
+ràng buộc sensitivity/accuracy và cần sparse kernel thực sự.

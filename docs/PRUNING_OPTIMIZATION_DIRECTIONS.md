@@ -161,9 +161,21 @@ Giao thức và ý nghĩa chi tiết nằm tại
 ### Kết quả hiện có và giả thuyết tiếp theo
 
 Scheme params-23 hiện đạt 68,328% trước và 67,996% sau fine-tune, giảm 30,27%
-parameter nhưng chỉ 9,56% MAC. Nó chưa được so với Uniform tại cùng budget. Thí
-nghiệm tiếp theo phải đặt cùng effective MACs để kiểm tra mixed N:M có giữ Top-1
-tốt hơn hay không.
+parameter nhưng chỉ 9,56% MAC. Nó chưa được so với Uniform tại cùng budget.
+
+Profile hardware-aware mới đo 21 layer × 5 cấu hình trên Tesla T4. Không có cấu
+hình sparse nào nhanh hơn dense tại cùng layer vì operator hiện vẫn là dense.
+Predictor latency có MAPE 69,85%, nên chưa đủ tin cậy để thay lookup. Selector
+lookup với objective latency/bandwidth/memory `0,2/0,4/0,4` đạt 3,102% giảm
+composite dự đoán, 37,22% parameter và 23,92% MAC, nhưng Top-1 chỉ đạt 0,250%
+trước và 51,962% sau fine-tune; median latency sau fine-tune 6,923 ms còn chậm
+hơn dense 3,725 ms. Đây là kết quả âm có giá trị: cost proxy hiện chọn sparsity
+quá mạnh ở layer nhạy và không tạo speedup trên runtime T4 này.
+
+Thí nghiệm tiếp theo phải thêm accuracy/sensitivity loss vào bài toán chọn scheme,
+so Domino và Uniform tại cùng effective MAC, đồng thời profile lại bằng kernel
+thực sự khai thác sparse. Với FPGA/board, phải đo lại latency, energy, bandwidth
+và memory trên chính toolchain mục tiêu; không tái sử dụng profile T4.
 
 ## 5. Hướng 3: Structured channel/filter pruning
 
