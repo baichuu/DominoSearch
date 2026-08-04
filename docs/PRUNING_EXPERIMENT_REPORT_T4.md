@@ -73,17 +73,17 @@ debug hoặc một thiết bị khác.
 `Δ trước FT` chỉ có ở checkpoint sau fine-tune và cho biết fine-tune phục hồi hay
 làm giảm Top-1. Peak memory dùng MB thập phân.
 
-| Phương pháp | Giai đoạn | Top-1 % | Top-5 % | Δ dense | Δ trước FT | Param giảm % | MAC giảm % | Median ms | P95 ms | sample/s | Peak MB |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Dense | Baseline | 69,754 | 89,078 | +0,000 | — | 0,00 | 0,00 | 3,725 | 5,281 | 268,44 | 93,19 |
-| Domino mixed N:M | Trước FT | 68,328 | 88,356 | -1,426 | — | 30,27 | 9,56 | 8,577 | 9,370 | 116,59 | 114,06 |
-| Domino mixed N:M | Sau FT | 67,996 | 88,168 | -1,758 | -0,332 | 30,27 | 9,56 | 8,197 | 8,705 | 122,00 | 114,06 |
-| Uniform 3:4 | Trước FT | 66,094 | 86,856 | -3,660 | — | 23,49 | 23,10 | 22,230 | 23,531 | 44,98 | 114,06 |
-| Uniform 3:4 | Sau FT | 68,388 | 88,288 | -1,366 | +2,294 | 23,49 | 23,10 | 22,761 | 24,265 | 43,94 | 114,06 |
-| Structured channel 10% L1 | Trước FT | 51,066 | 75,698 | -18,688 | — | 8,99 | 10,16 | 3,742 | 4,209 | 267,25 | 93,19 |
-| Structured channel 10% L1 | Sau FT | 66,672 | 87,362 | -3,082 | +15,606 | 8,99 | 10,16 | 3,710 | 4,069 | 269,55 | 93,19 |
-| Unstructured global 30% | Trước FT | 69,218 | 88,878 | -0,536 | — | 28,63 | 21,89 | 3,775 | 4,049 | 264,88 | 93,19 |
-| Unstructured global 30% | Sau FT | 68,572 | 88,512 | -1,182 | -0,646 | 28,63 | 21,89 | 3,712 | 4,754 | 269,40 | 93,19 |
+| Phương pháp               | Giai đoạn | Top-1 % | Top-5 % | Δ dense | Δ trước FT | Param giảm % | MAC giảm % | Median ms | P95 ms | sample/s | Peak MB |
+| ------------------------- | --------- | ------: | ------: | ------: | ---------: | -----------: | ---------: | --------: | -----: | -------: | ------: |
+| Dense                     | Baseline  |  69,754 |  89,078 |  +0,000 |          — |         0,00 |       0,00 |     3,725 |  5,281 |   268,44 |   93,19 |
+| Domino mixed N:M          | Trước FT  |  68,328 |  88,356 |  -1,426 |          — |        30,27 |       9,56 |     8,577 |  9,370 |   116,59 |  114,06 |
+| Domino mixed N:M          | Sau FT    |  67,996 |  88,168 |  -1,758 |     -0,332 |        30,27 |       9,56 |     8,197 |  8,705 |   122,00 |  114,06 |
+| Uniform 3:4               | Trước FT  |  66,094 |  86,856 |  -3,660 |          — |        23,49 |      23,10 |    22,230 | 23,531 |    44,98 |  114,06 |
+| Uniform 3:4               | Sau FT    |  68,388 |  88,288 |  -1,366 |     +2,294 |        23,49 |      23,10 |    22,761 | 24,265 |    43,94 |  114,06 |
+| Structured channel 10% L1 | Trước FT  |  51,066 |  75,698 | -18,688 |          — |         8,99 |      10,16 |     3,742 |  4,209 |   267,25 |   93,19 |
+| Structured channel 10% L1 | Sau FT    |  66,672 |  87,362 |  -3,082 |    +15,606 |         8,99 |      10,16 |     3,710 |  4,069 |   269,55 |   93,19 |
+| Unstructured global 30%   | Trước FT  |  69,218 |  88,878 |  -0,536 |          — |        28,63 |      21,89 |     3,775 |  4,049 |   264,88 |   93,19 |
+| Unstructured global 30%   | Sau FT    |  68,572 |  88,512 |  -1,182 |     -0,646 |        28,63 |      21,89 |     3,712 |  4,754 |   269,40 |   93,19 |
 
 ## 6. Phân tích từng hướng bằng dữ liệu thực tế
 
@@ -180,12 +180,12 @@ bị.
 
 ### 7.2 Nếu bắt buộc chọn checkpoint sau fine-tune
 
-| Hạng | Phương pháp | Top-1 % | Δ dense | Param giảm % | MAC giảm % |
-| ---: | --- | ---: | ---: | ---: | ---: |
-| 1 | Unstructured global 30% | 68,572 | -1,182 | 28,63 | 21,89 |
-| 2 | Uniform 3:4 | 68,388 | -1,366 | 23,49 | 23,10 |
-| 3 | Domino mixed N:M | 67,996 | -1,758 | 30,27 | 9,56 |
-| 4 | Structured channel 10% L1 | 66,672 | -3,082 | 8,99 | 10,16 |
+| Hạng | Phương pháp               | Top-1 % | Δ dense | Param giảm % | MAC giảm % |
+| ---: | ------------------------- | ------: | ------: | -----------: | ---------: |
+|    1 | Unstructured global 30%   |  68,572 |  -1,182 |        28,63 |      21,89 |
+|    2 | Uniform 3:4               |  68,388 |  -1,366 |        23,49 |      23,10 |
+|    3 | Domino mixed N:M          |  67,996 |  -1,758 |        30,27 |       9,56 |
+|    4 | Structured channel 10% L1 |  66,672 |  -3,082 |         8,99 |      10,16 |
 
 ### 7.3 Những điều dữ liệu chưa chứng minh
 
@@ -228,12 +228,12 @@ unstructured-global30-after-train50k-20260804.json
 
 Checkpoint sau fine-tune được truy vết bằng SHA-256:
 
-| Hướng | SHA-256 checkpoint cuối |
-| --- | --- |
-| Domino mixed N:M | `863eca5a477bba9450cb2f1c63bf85db0b27c9ee7e7a18d97af1542455ac6d59` |
-| Uniform 3:4 | `00d5f5b31fdb828e7623b45ec3b96a85cc298bc14a29866ab12814cbb3eff864` |
+| Hướng                     | SHA-256 checkpoint cuối                                            |
+| ------------------------- | ------------------------------------------------------------------ |
+| Domino mixed N:M          | `863eca5a477bba9450cb2f1c63bf85db0b27c9ee7e7a18d97af1542455ac6d59` |
+| Uniform 3:4               | `00d5f5b31fdb828e7623b45ec3b96a85cc298bc14a29866ab12814cbb3eff864` |
 | Structured channel 10% L1 | `4c6a4d131516b687fdc3dd94fcb417d92a3e3c9fccdb1ad1524f2452cb388913` |
-| Unstructured global 30% | `044acb2472cab120b63082bf46b6c73701a848a9c8590db6e6b73337324d2d50` |
+| Unstructured global 30%   | `044acb2472cab120b63082bf46b6c73701a848a9c8590db6e6b73337324d2d50` |
 
 Uniform được resume sau epoch 1; structured và unstructured được resume từ
 checkpoint epoch 2 do session/runtime bị gián đoạn. Manifest cuối đánh dấu hoàn
@@ -255,13 +255,13 @@ Google Drive/MyDrive/DominoSearch-artifacts/
 
 ### Commit nguồn
 
-| Hướng | Branch | Implementation commit | Commit của kết quả sau FT |
-| --- | --- | --- | --- |
-| Dense/shared | `master` | `d8254f6` | `c3d022f` (benchmark baseline) |
-| Uniform N:M | `pruning-uniform-nm` | `59ed0b1` | `78f79e7` |
-| Domino mixed N:M | `pruning-domino-mixed-nm` | `956077e`, `77f4aac` | `025de97` |
-| Structured channel | `pruning-structured-channel` | `f12b328` | `9cce258` |
-| Unstructured magnitude | `pruning-unstructured-magnitude` | `d47df96` | `142aa66` |
+| Hướng                  | Branch                           | Implementation commit | Commit của kết quả sau FT      |
+| ---------------------- | -------------------------------- | --------------------- | ------------------------------ |
+| Dense/shared           | `master`                         | `d8254f6`             | `c3d022f` (benchmark baseline) |
+| Uniform N:M            | `pruning-uniform-nm`             | `59ed0b1`             | `78f79e7`                      |
+| Domino mixed N:M       | `pruning-domino-mixed-nm`        | `956077e`, `77f4aac`  | `025de97`                      |
+| Structured channel     | `pruning-structured-channel`     | `f12b328`             | `9cce258`                      |
+| Unstructured magnitude | `pruning-unstructured-magnitude` | `d47df96`             | `142aa66`                      |
 
 CSV máy đọc và validity audit được lưu trong thư mục `reports/` trên Drive. Chỉ
 chín candidate run vượt kiểm tra tính hợp lệ mới được đưa vào bảng; debug run bị
