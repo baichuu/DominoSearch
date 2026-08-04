@@ -11,19 +11,24 @@ tầng dùng chung; implementation của từng phương pháp chỉ tồn tại
 - **Validated**: đã chạy dense/pruned trước và sau fine-tune cùng điều kiện.
 - **Hardware validated**: đã đo trên đúng board/runtime mục tiêu.
 
-Hiện tại các hướng mới đạt **Implemented / Ready for evaluation**. Chưa có
-checkpoint, ImageNet và PyTorch runtime trong môi trường phát triển hiện tại, nên
-không hướng nào được gọi là “tốt nhất” hoặc “đã tăng tốc”.
+Đến ngày 2026-08-04, mỗi hướng đã có một cấu hình được benchmark trước và sau
+fine-tune trên đủ 50.000 ảnh ImageNet validation bằng Tesla T4. Vì mới có một
+cấu hình mỗi hướng và fine-tune dùng budget giới hạn, trạng thái phù hợp là
+**Validated on T4 (limited experiment)**, chưa phải hoàn tất toàn bộ sweep.
+
+Số liệu và giới hạn diễn giải nằm tại
+[`PRUNING_EXPERIMENT_REPORT_T4.md`](PRUNING_EXPERIMENT_REPORT_T4.md). Không hướng
+nào được xác nhận tăng tốc runtime từ benchmark hiện tại.
 
 ## Tổng quan
 
 | Branch | Điểm tối ưu | Implementation commit | Trạng thái |
 | --- | --- | --- | --- |
-| `master` | Dense baseline và hạ tầng chung | `766a809` | Shared baseline |
-| `pruning-uniform-nm` | Một N:M đồng nhất, có thể bảo vệ boundary/1×1 | `59ed0b1` | Ready for evaluation |
-| `pruning-domino-mixed-nm` | Mixed N:M theo parameter hoặc FLOPs budget | `956077e` | Ready for evaluation |
-| `pruning-structured-channel` | Hidden-channel pruning an toàn trong residual block | `f12b328` | Ready for evaluation |
-| `pruning-unstructured-magnitude` | Global/local exact magnitude masks | `d47df96` | Ready for evaluation |
+| `master` | Dense baseline và hạ tầng chung | `d8254f6` | Baseline validated on T4 |
+| `pruning-uniform-nm` | Một N:M đồng nhất, có thể bảo vệ boundary/1×1 | `59ed0b1` | 3:4 validated, limited FT |
+| `pruning-domino-mixed-nm` | Mixed N:M theo parameter hoặc FLOPs budget | `956077e`, `77f4aac` | Params-23 validated, limited FT |
+| `pruning-structured-channel` | Hidden-channel pruning an toàn trong residual block | `f12b328` | Channel-10 L1 validated, limited FT |
+| `pruning-unstructured-magnitude` | Global/local exact magnitude masks | `d47df96` | Global-30 validated, limited FT |
 
 Các commit merge sau đó có thể làm branch tip thay đổi; cột implementation commit
 chỉ ra commit chứa thay đổi cốt lõi của phương pháp.
@@ -59,8 +64,10 @@ docs/optimizations/UNIFORM_NM.md
 
 Artifact: exact scheme text và manifest JSON. Fine-tune bằng SR-STE hiện có.
 
-Bằng chứng còn thiếu: accuracy trước/sau fine-tune cho toàn bộ matrix U0–U5 và so
-với mixed N:M ở cùng effective budget.
+Đã có bằng chứng cho Uniform 3:4 conservative: Top-1 tăng từ 66,094% trước
+fine-tune lên 68,388% sau fine-tune; parameter/MAC giảm 23,49%/23,10%. Runtime
+PyTorch hiện chậm hơn dense. Còn thiếu toàn bộ matrix U0–U5 và phép so mixed N:M
+ở cùng effective budget.
 
 ## `pruning-domino-mixed-nm`
 
@@ -79,8 +86,9 @@ search/find_mix_from_dense_imagenet.py
 docs/optimizations/DOMINO_MIXED_NM.md
 ```
 
-Bằng chứng còn thiếu: search/fine-tune các target 50–80%, sau đó so với uniform ở
-cùng parameter hoặc MAC budget.
+Đã có params-23 scheme: Top-1 68,328% trước và 67,996% sau fine-tune; parameter
+giảm 30,27% nhưng MAC chỉ giảm 9,56%. Còn thiếu search/fine-tune nhiều target và
+phép so với Uniform ở cùng parameter hoặc MAC budget.
 
 ## `pruning-structured-channel`
 
@@ -99,9 +107,10 @@ pruning/structured_channel/prune_checkpoint.py
 docs/optimizations/STRUCTURED_CHANNEL.md
 ```
 
-Artifact hiện là masked dense-shape checkpoint, chưa phải compact model. Bằng
-chứng còn thiếu: accuracy sweep 10–40%, compact export và latency thật trên
-CPU/board/FPGA.
+Đã có channel-10 L1: Top-1 51,066% trước và 66,672% sau fine-tune; parameter/MAC
+giảm 8,99%/10,16%. Artifact vẫn là masked dense-shape checkpoint, chưa phải model
+compact, nên latency hiện tại chưa chứng minh lợi ích của structured model
+compact. Còn thiếu sweep, compact export và phép đo runtime sau compact.
 
 ## `pruning-unstructured-magnitude`
 
@@ -120,8 +129,10 @@ pruning/unstructured_magnitude/prune_checkpoint.py
 docs/optimizations/UNSTRUCTURED_MAGNITUDE.md
 ```
 
-Bằng chứng còn thiếu: accuracy sweep 50–90%, global-vs-local và kiểm tra sparse
-runtime có thực sự hỗ trợ irregular pattern hay không.
+Đã có global-30: Top-1 69,218% trước và 68,572% sau fine-tune; parameter/MAC giảm
+28,63%/21,89%. Đây là điểm accuracy–complexity tốt nhất trong các run hiện có,
+nhưng không giảm runtime. Còn thiếu sweep, global-vs-local và sparse runtime hỗ
+trợ irregular pattern.
 
 ## Trình tự benchmark chung
 
