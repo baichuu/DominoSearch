@@ -8,12 +8,11 @@ Hugging Face ImageNet shards directly from a mounted Google Drive directory.
 from __future__ import annotations
 
 import io
-import math
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from PIL import Image
-from torch.utils.data import IterableDataset
+from torch.utils.data import IterableDataset, get_worker_info
 
 
 IMAGENET_SPLIT_SAMPLES = {"train": 1_281_167, "validation": 50_000}
@@ -126,8 +125,15 @@ class ParquetImageNetDataset(IterableDataset):
         self.expected_shards = required_shards
         self.epoch = 0
 
+    @staticmethod
+    def _partition_size(total: int, index: int, partitions: int) -> int:
+        """Return an exact balanced quota for one rank or DataLoader worker."""
+
+        quotient, remainder = divmod(total, partitions)
+        return quotient + int(index < remainder)
+
     def __len__(self) -> int:
-        return math.ceil(self.num_samples / self.world_size)
+        return self._partition_size(self.num_samples, self.rank, self.world_size)
 
     def set_epoch(self, epoch: int) -> None:
         if epoch < 0:
@@ -165,7 +171,16 @@ class ParquetImageNetDataset(IterableDataset):
         return dataset
 
     def __iter__(self) -> Iterator[tuple[Any, int]]:
-        for example in self._stream():
+        worker = get_worker_info()
+        worker_limit = len(self)
+        if worker is not None:
+            worker_limit = self._partition_size(
+                worker_limit, worker.id, worker.num_workers
+            )
+
+        for index, example in enumerate(self._stream()):
+            if index >= worker_limit:
+                break
             if self.image_column not in example or self.label_column not in example:
                 raise KeyError(
                     "Parquet rows must contain columns "
