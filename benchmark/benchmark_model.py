@@ -77,6 +77,7 @@ def parse_args() -> argparse.Namespace:
             "domino-mixed-nm",
             "structured-channel",
             "unstructured-magnitude",
+            "unstructured-gradual",
         ),
         default="dense",
     )
@@ -213,7 +214,7 @@ def apply_scheme(model: nn.Module, scheme: dict[str, list[int]]) -> None:
         layer.apply_N_M(*scheme[name])
 
 
-def load_checkpoint(model: nn.Module, path: Path) -> dict[str, list[str]]:
+def load_checkpoint(model: nn.Module, path: Path) -> dict[str, Any]:
     checkpoint = torch.load(path, map_location="cpu")
     if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
         state = checkpoint["state_dict"]
@@ -226,6 +227,11 @@ def load_checkpoint(model: nn.Module, path: Path) -> dict[str, list[str]]:
     load_info = {
         "missing_keys": list(incompatible.missing_keys),
         "unexpected_keys": list(incompatible.unexpected_keys),
+        "gradual_pruning": (
+            checkpoint.get("gradual_pruning")
+            if isinstance(checkpoint, dict)
+            else None
+        ),
     }
     if load_info["missing_keys"] or load_info["unexpected_keys"]:
         raise ValueError(
@@ -253,7 +259,11 @@ def build_model(args: argparse.Namespace) -> tuple[nn.Module, dict[str, Any]]:
     )
     if hasattr(model, "set_datalayout"):
         model.set_datalayout(args.layout)
-    load_info: dict[str, Any] = {"missing_keys": [], "unexpected_keys": []}
+    load_info: dict[str, Any] = {
+        "missing_keys": [],
+        "unexpected_keys": [],
+        "gradual_pruning": None,
+    }
     if args.checkpoint:
         load_info = load_checkpoint(model, args.checkpoint)
     if args.scheme_file:

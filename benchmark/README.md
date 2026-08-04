@@ -163,6 +163,12 @@ Với checkpoint đã materialize số 0 của structured hoặc unstructured pr
 `--density-source nonzero`. Với N:M động của `SparseConv`/`SparseLinear`, giữ mặc
 định `--density-source nm` vì dense weight trong checkpoint chưa chứa mask.
 
+Checkpoint từ nhánh `pruning-unstructured-gradual` dùng
+`--pruning-method unstructured-gradual --density-source nonzero`. JSON benchmark
+đọc metadata `gradual_pruning` đã lưu trong checkpoint, gồm schedule, target và
+sparsity mask cuối. Không dùng `--scheme-file`: training gradual đã ép N=M để
+không trộn thêm N:M pruning.
+
 Fine-tune checkpoint có mask bằng `train_imagenet.py --initial-checkpoint ...
 --weight-mask-file ...`. Mask được kiểm tra đúng tên/shape, nhân vào gradient và
 được áp lại sau mỗi `optimizer.step`, nên weight đã prune không tự mọc lại.

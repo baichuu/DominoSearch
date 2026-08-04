@@ -445,6 +445,60 @@ Thay `--base_lr` và `--model_dir` trong lệnh phần 9.2. Không overwrite run
 - mask vẫn được giữ;
 - benchmark dùng cùng 50.000 validation sample và cùng GPU/runtime.
 
+### 9.6 Nhánh gradual unstructured mới
+
+Nhánh `pruning-unstructured-gradual` triển khai phương án tăng sparsity dần và
+hiện chỉ mới sẵn sàng để chạy, chưa có kết quả ImageNet. Khi bắt đầu thí nghiệm:
+
+```bash
+!git switch pruning-unstructured-gradual
+!git pull --ff-only
+!python train/classification_sparsity_level/train_imagenet.py \
+  --config train/classification_sparsity_level/train_imagenet/configs/config_resnet18.yaml \
+  --initial-checkpoint "$DS_CHECKPOINT_ROOT/resnet18-dense.pth" \
+  --gradual-pruning-target 0.30 \
+  --gradual-pruning-start-epoch 0 \
+  --gradual-pruning-end-epoch 3 \
+  --gradual-pruning-frequency 1 \
+  --gradual-pruning-power 3 \
+  --gradual-pruning-scope global \
+  --dataset-format parquet \
+  --parquet-root "$DS_DATA_ROOT" \
+  --train-num-samples 50000 \
+  --val-num-samples 1000 \
+  --shuffle-buffer 10000 \
+  --data-workers 2 \
+  --epochs 5 \
+  --base_lr 0.001 \
+  --seed 42 \
+  --save-every-epoch \
+  --model_dir "$DS_RUN_ROOT/gradual-global30-5epoch-train50k"
+```
+
+Epoch 0 bắt đầu dense; epoch 3 đạt target; epoch 4 giữ mask để phục hồi. Benchmark
+checkpoint cuối:
+
+```bash
+!python benchmark/benchmark_model.py \
+  --run-name gradual-global30-after-train50k \
+  --pruning-method unstructured-gradual \
+  --density-source nonzero \
+  --experiment-status candidate \
+  --model resnet18_sparse \
+  --checkpoint "$DS_RUN_ROOT/gradual-global30-5epoch-train50k/model.pth-5" \
+  --n 16 --m 16 \
+  --dataset-format parquet \
+  --parquet-root "$DS_DATA_ROOT" \
+  --accuracy-batch-size 64 \
+  --workers 2 --device cuda \
+  --batch-size 1 --warmup 30 --iterations 100 --seed 42 \
+  --output "$DS_RESULT_ROOT/gradual-global30-after-train50k.json"
+```
+
+Để có mốc “pruned trước fine-tune”, dùng JSON one-shot global 30% đã tạo ở phần
+8.3. Chỉ kết luận gradual tốt hơn nếu Top-1 cuối vượt 69,218% ở cùng sparsity và
+cùng benchmark protocol.
+
 ## 10. Chạy ba hướng pruning còn lại
 
 Mỗi hướng nên chạy trong notebook/session riêng nhưng dùng cùng Drive, dense

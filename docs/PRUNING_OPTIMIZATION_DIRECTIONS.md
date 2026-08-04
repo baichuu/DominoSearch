@@ -245,7 +245,63 @@ dense, đồng thời giảm 28,63% parameter và 21,89% MAC hiệu dụng. Đâ
 accuracy–complexity tốt nhất hiện có nhưng không giảm latency. Fine-tune LR 0.01
 làm accuracy giảm; cần thử LR `0.001` và `0.0001` trước khi tăng budget.
 
-## 7. Ma trận thí nghiệm tối thiểu
+## 7. Hướng 5: Gradual unstructured magnitude pruning
+
+Nhánh Git: `pruning-unstructured-gradual`.
+
+### Ý tưởng
+
+Thay vì zero 30% weight trong một lần, sparsity tăng theo lịch cubic trong quá
+trình fine-tune. Mask chỉ chuyển từ `1 → 0`, không cho weight đã prune mọc lại.
+Layer convolution đầu và linear cuối được bảo vệ mặc định.
+
+Với target 30%, start epoch 0, end epoch 3 và power 3:
+
+```text
+epoch 0:  0,00%
+epoch 1: 21,11%
+epoch 2: 28,89%
+epoch 3: 30,00%
+epoch 4: giữ mask 30% để phục hồi
+```
+
+Training tự ép mọi sparse layer về N=M để không trộn N:M với unstructured
+pruning. Mỗi epoch cập nhật sinh mask artifact riêng; checkpoint lưu cả schedule,
+mask và measured sparsity để resume/audit.
+
+### Lệnh chuẩn bị để chạy sau
+
+```bash
+git switch pruning-unstructured-gradual
+
+python train/classification_sparsity_level/train_imagenet.py \
+  --config train/classification_sparsity_level/train_imagenet/configs/config_resnet18.yaml \
+  --initial-checkpoint /path/to/resnet18-dense.pth \
+  --gradual-pruning-target 0.30 \
+  --gradual-pruning-start-epoch 0 \
+  --gradual-pruning-end-epoch 3 \
+  --gradual-pruning-frequency 1 \
+  --gradual-pruning-power 3 \
+  --gradual-pruning-scope global \
+  --epochs 5 \
+  --base_lr 0.001 \
+  --dataset-format parquet \
+  --parquet-root /path/to/imagenet-1k \
+  --train-num-samples 50000 \
+  --val-num-samples 1000 \
+  --seed 42 \
+  --save-every-epoch \
+  --model_dir /path/to/runs/gradual-global30
+```
+
+### Trạng thái và tiêu chí
+
+Implementation đã sẵn sàng cho evaluation nhưng chưa có run ImageNet. Kết quả
+chỉ được xem là tốt hơn one-shot global 30% nếu checkpoint cuối vẫn đạt khoảng
+28,63% parameter reduction, 21,89% MAC reduction và Top-1 vượt 69,218% trong
+cùng benchmark protocol.
+
+## 8. Ma trận thí nghiệm tối thiểu
 
 | Nhóm               | Cấu hình tối thiểu        | Fine-tune | Vai trò            |
 | ------------------ | ------------------------- | --------- | ------------------ |
@@ -254,6 +310,7 @@ làm accuracy giảm; cần thử LR `0.001` và `0.0001` trước khi tăng bud
 | Domino mixed N:M   | target 50%, 60%, 70%, 80% | Có        | Hướng chính        |
 | Structured channel | 10%, 20%, 30%, 40%, 50%   | Có        | Hướng phần cứng    |
 | Unstructured       | 50%, 70%, 80%, 90%        | Có        | Đối chứng accuracy |
+| Gradual unstructured | 30%, 40%                | Trong FT  | Phục hồi accuracy  |
 
 Mỗi cấu hình cần lưu:
 
@@ -265,7 +322,7 @@ Mỗi cấu hình cần lưu:
 - log huấn luyện;
 - kết quả export/implementation trên phần cứng nếu có.
 
-## 8. Tiêu chí chọn hướng tốt nhất
+## 9. Tiêu chí chọn hướng tốt nhất
 
 Không chọn model chỉ vì có sparsity cao nhất. Nên chọn theo Pareto frontier: không
 có model khác vừa chính xác hơn, vừa nhanh hơn, vừa nhỏ hơn.
@@ -286,7 +343,7 @@ Speedup         = latency_dense / latency_pruned
 Memory reduction= 1 - memory_pruned / memory_dense
 ```
 
-## 9. Thứ tự thí nghiệm tiếp theo sau kết quả thực tế
+## 10. Thứ tự thí nghiệm tiếp theo sau kết quả thực tế
 
 1. Tune unstructured global 30% với LR `0.001` và `0.0001`; giữ nguyên mask và
    chỉ nhận checkpoint vượt 69,218% Top-1.
@@ -296,7 +353,7 @@ Memory reduction= 1 - memory_pruned / memory_dense
    runtime.
 5. Lặp latency nhiều lần trên cùng runtime; không gọi chênh lệch nhỏ là speedup.
 
-## 10. Công cụ benchmark
+## 11. Công cụ benchmark
 
 Hướng dẫn chạy benchmark nằm tại [`benchmark/README.md`](../benchmark/README.md).
 Mọi nhánh phải dùng cùng công cụ và cùng điều kiện đo để kết quả có thể so sánh.

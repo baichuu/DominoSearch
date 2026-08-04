@@ -46,6 +46,17 @@ from devkit.core import (
 from devkit.core import load_state_file
 from devkit.dataset.imagenet_dataset import ColorAugmentation, ImagenetDataset
 from imagenet_data import ParquetImageNetDataset
+from pruning.unstructured_magnitude.gradual import (
+    GradualMagnitudeConfig,
+    apply_gradual_pruning,
+    eligible_weight_parameters,
+    initialize_masks,
+    mask_statistics,
+    restore_masks_from_training_checkpoint,
+    save_mask_artifact,
+    scheduled_sparsity,
+    should_update_masks,
+)
 
 
 
@@ -105,6 +116,28 @@ parser.add_argument(
     default=None,
     help='override YAML workers without changing the original config',
 )
+parser.add_argument(
+    '--gradual-pruning-target',
+    type=float,
+    default=None,
+    help='enable gradual magnitude pruning and set final eligible-weight sparsity',
+)
+parser.add_argument('--gradual-pruning-start-epoch', type=int, default=0)
+parser.add_argument('--gradual-pruning-end-epoch', type=int, default=None)
+parser.add_argument('--gradual-pruning-frequency', type=int, default=1)
+parser.add_argument('--gradual-pruning-power', type=float, default=3.0)
+parser.add_argument(
+    '--gradual-pruning-scope',
+    choices=('global', 'local'),
+    default='global',
+)
+parser.add_argument('--gradual-prune-first', action='store_true')
+parser.add_argument('--gradual-prune-last', action='store_true')
+parser.add_argument(
+    '--gradual-mask-dir',
+    default='',
+    help='directory for immutable epoch-specific gradual mask artifacts',
+)
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
 
@@ -132,6 +165,30 @@ def main():
         if args.data_workers < 0:
             raise ValueError('--data-workers cannot be negative')
         args.workers = args.data_workers
+
+    args.gradual_pruning_config = None
+    if args.gradual_pruning_target is not None:
+        if args.weight_mask_file:
+            raise ValueError(
+                '--weight-mask-file cannot be combined with gradual pruning; '
+                'resume gradual runs through --model_dir instead'
+            )
+        gradual_end_epoch = (
+            args.epochs - 1
+            if args.gradual_pruning_end_epoch is None
+            else args.gradual_pruning_end_epoch
+        )
+        args.gradual_pruning_config = GradualMagnitudeConfig(
+            target_sparsity=args.gradual_pruning_target,
+            start_epoch=args.gradual_pruning_start_epoch,
+            end_epoch=gradual_end_epoch,
+            frequency=args.gradual_pruning_frequency,
+            power=args.gradual_pruning_power,
+            scope=args.gradual_pruning_scope,
+            prune_first=args.gradual_prune_first,
+            prune_last=args.gradual_prune_last,
+        )
+        args.gradual_pruning_config.validate(args.epochs)
 
     rank, world_size = init_dist(
         backend='nccl', port=args.port )
@@ -164,15 +221,24 @@ def main():
 
     #model.set_datalayout('NHWC')
 
-    # read 
-    with open(args.schemes_file) as f:
-        first_line = f.readline()
+    if args.gradual_pruning_config is not None:
+        # Gradual unstructured pruning must not be mixed with N:M. Force every
+        # sparse operator to dense N:M while the magnitude masks evolve.
+        sparse_schemes = {
+            layer.get_name(): [args.M, args.M]
+            for layer in model.modules()
+            if isinstance(layer, (SparseConv, SparseLinear))
+        }
+        if not sparse_schemes:
+            raise ValueError('Model contains no sparse layers for a dense scheme')
+    else:
+        with open(args.schemes_file) as f:
+            first_line = f.readline()
 
-    if not first_line.strip():
-        raise ValueError("The schemes file is empty: {}".format(args.schemes_file))
+        if not first_line.strip():
+            raise ValueError("The schemes file is empty: {}".format(args.schemes_file))
 
-    # read sparse scheme
-    sparse_schemes = ast.literal_eval(first_line)
+        sparse_schemes = ast.literal_eval(first_line)
 
 
     # set layer-wise sparse scheme    
@@ -186,7 +252,10 @@ def main():
     # set_flops(model)
 
     if rank == 0:
-        print('Use schemes file {}'.format(args.schemes_file))
+        if args.gradual_pruning_config is not None:
+            print('Use internally generated dense N:M scheme for gradual pruning')
+        else:
+            print('Use schemes file {}'.format(args.schemes_file))
         print("Start to train mixed Sparse NN")
         print(model)
         # print(model.named_layers)
@@ -220,6 +289,8 @@ def main():
 
     args.parameter_masks = {}
     args.parameter_mask_hooks = []
+    args.gradual_eligible = []
+    args.gradual_protected = []
     if args.weight_mask_file:
         args.parameter_masks = load_parameter_masks(
             args.weight_mask_file, model, args.device
@@ -232,6 +303,44 @@ def main():
             print(
                 "Loaded {} persistent parameter mask(s) from '{}'".format(
                     len(args.parameter_masks), args.weight_mask_file
+                )
+            )
+    elif args.gradual_pruning_config is not None:
+        args.gradual_eligible, args.gradual_protected = eligible_weight_parameters(
+            model,
+            prune_first=args.gradual_pruning_config.prune_first,
+            prune_last=args.gradual_pruning_config.prune_last,
+        )
+        args.parameter_masks = restore_masks_from_training_checkpoint(
+            model_dir,
+            args.gradual_eligible,
+            args.gradual_pruning_config,
+        )
+        if args.parameter_masks is None:
+            args.parameter_masks = initialize_masks(
+                args.gradual_eligible,
+                preserve_existing_zeros=start_epoch > 0,
+            )
+        apply_parameter_masks(model, args.parameter_masks)
+        args.parameter_mask_hooks = register_parameter_mask_hooks(
+            model, args.parameter_masks
+        )
+        args.gradual_mask_dir = args.gradual_mask_dir or osp.join(
+            model_dir, 'gradual-masks'
+        )
+        if rank == 0:
+            restored = mask_statistics(
+                args.gradual_eligible, args.parameter_masks
+            )['eligible_sparsity']
+            print(
+                'Enabled gradual {} magnitude pruning to {:.2f}% from epoch {} '
+                'through {} (power {:.2f}); restored mask sparsity {:.2f}%.'.format(
+                    args.gradual_pruning_config.scope,
+                    100.0 * args.gradual_pruning_config.target_sparsity,
+                    args.gradual_pruning_config.start_epoch,
+                    args.gradual_pruning_config.end_epoch,
+                    args.gradual_pruning_config.power,
+                    100.0 * restored,
                 )
             )
     if args.rank == 0:
@@ -354,6 +463,41 @@ def main():
         else:
             train_dataset.set_epoch(epoch)
 
+        if (
+            args.gradual_pruning_config is not None
+            and should_update_masks(args.gradual_pruning_config, epoch)
+        ):
+            target = scheduled_sparsity(args.gradual_pruning_config, epoch)
+            statistics = apply_gradual_pruning(
+                args.gradual_eligible,
+                args.parameter_masks,
+                target,
+                args.gradual_pruning_config.scope,
+            )
+            if rank == 0:
+                mask_path = osp.join(
+                    args.gradual_mask_dir,
+                    'gradual-mask-epoch-{}.pth'.format(epoch + 1),
+                )
+                save_mask_artifact(
+                    mask_path,
+                    args.parameter_masks,
+                    args.gradual_pruning_config,
+                    epoch,
+                    target,
+                    statistics,
+                    args.gradual_protected,
+                )
+                print(
+                    'Gradual pruning epoch {}: scheduled {:.2f}%, actual {:.2f}%, '
+                    'mask {}'.format(
+                        epoch + 1,
+                        100.0 * target,
+                        100.0 * statistics['eligible_sparsity'],
+                        mask_path,
+                    )
+                )
+
         train(train_loader, model, criterion, optimizer, lr_scheduler, epoch, writer)
 
 
@@ -364,14 +508,31 @@ def main():
             is_best = prec1 > best_prec1
             best_prec1 = max(prec1, best_prec1)
             if args.save_every_epoch or epoch > 1:
-                save_checkpoint(model_dir, {
+                checkpoint_state = {
                     'epoch': epoch + 1,
                     'model': args.model,
                     'state_dict': model.state_dict(),
                     'best_prec1': best_prec1,
                     'optimizer': optimizer.state_dict(),
                     #'arch_optimizer': arch_optimizer.state_dict(),
-                }, is_best)
+                }
+                if args.gradual_pruning_config is not None:
+                    checkpoint_state['parameter_masks'] = {
+                        name: mask.detach().to(device='cpu', dtype=torch.bool)
+                        for name, mask in args.parameter_masks.items()
+                    }
+                    checkpoint_state['gradual_pruning'] = {
+                        'schedule': args.gradual_pruning_config.to_dict(),
+                        'epoch': epoch,
+                        'scheduled_target': scheduled_sparsity(
+                            args.gradual_pruning_config, epoch
+                        ),
+                        'statistics': mask_statistics(
+                            args.gradual_eligible, args.parameter_masks
+                        ),
+                        'protected_parameters': args.gradual_protected,
+                    }
+                save_checkpoint(model_dir, checkpoint_state, is_best)
     if rank == 0:
         print("Best accuracy is ",best_prec1 )
         writer.close()

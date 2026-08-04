@@ -33,6 +33,8 @@ Keep each experiment isolated in its assigned branch:
 - `pruning-domino-mixed-nm`: DominoSearch mixed N:M selected per layer.
 - `pruning-structured-channel`: structured channel or filter pruning.
 - `pruning-unstructured-magnitude`: local/global magnitude pruning baseline.
+- `pruning-unstructured-gradual`: gradual local/global magnitude pruning with a
+  monotonic mask schedule during fine-tuning.
 
 Do not implement one branch's pruning method in another branch. Shared fixes or
 benchmark improvements should be committed to `master` first and then merged or
@@ -63,6 +65,7 @@ Then verify the current branch against this table:
 | `pruning-domino-mixed-nm` | Per-layer mixed N:M and DominoSearch cost/search improvements only |
 | `pruning-structured-channel` | Structured channel/filter pruning only |
 | `pruning-unstructured-magnitude` | Local/global magnitude pruning only |
+| `pruning-unstructured-gradual` | Gradual local/global magnitude pruning only |
 
 Before continuing, the agent must be able to answer all of these questions with
 `yes`:
