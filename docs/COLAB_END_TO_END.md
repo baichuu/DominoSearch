@@ -448,7 +448,8 @@ Thay `--base_lr` và `--model_dir` trong lệnh phần 9.2. Không overwrite run
 ### 9.6 Nhánh gradual unstructured mới
 
 Nhánh `pruning-unstructured-gradual` triển khai phương án tăng sparsity dần và
-hiện chỉ mới sẵn sàng để chạy, chưa có kết quả ImageNet. Khi bắt đầu thí nghiệm:
+hiện chỉ mới sẵn sàng để chạy, chưa có kết quả ImageNet. Thuật toán schedule và
+mask nằm tại `pruning/unstructured_magnitude/gradual.py`. Khi bắt đầu thí nghiệm:
 
 ```bash
 !git switch pruning-unstructured-gradual
