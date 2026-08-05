@@ -114,10 +114,10 @@ thiếu layer/candidate, hoặc một candidate làm layer bớt sparse.
 Cổng đề xuất:
 
 | Target | Full Top-1 trước FT tối thiểu | Full Top-1 sau FT tối thiểu |
-| --- | ---: | ---: |
-| MAC18 | 67,5% | 69,3% |
-| MAC20 | 67,0% | 69,0% |
-| MAC23 | 66,5% | 68,4% |
+| ------ | ----------------------------: | --------------------------: |
+| MAC18  |                         67,5% |                       69,3% |
+| MAC20  |                         67,0% |                       69,0% |
+| MAC23  |                         66,5% |                       68,4% |
 
 Các ngưỡng là tiêu chí thí nghiệm, không phải kết quả đã đo. Không được ghi một
 stage là thành công nếu chỉ đạt effective MAC mà chưa qua accuracy full-val.
@@ -180,10 +180,10 @@ runtime bị mất (404/401). Không có JSON hoàn chỉnh, do đó partial pro
 Selector dùng profile 1.000 ảnh đã tạo ba debug scheme monotonic:
 
 | Scheme debug | Giảm MAC | Giảm parameter | Giảm MAC thêm so với MAC15 | Sensitivity cộng ước lượng |
-| --- | ---: | ---: | ---: | ---: |
-| MAC18 | 18,322% | 15,230% | 3,186 điểm % | 0,0 điểm Top-1 |
-| MAC20 | 20,711% | 16,177% | 5,576 điểm % | 0,5 điểm Top-1 |
-| MAC23 | 23,101% | 23,752% | 7,966 điểm % | 1,5 điểm Top-1 |
+| ------------ | -------: | -------------: | -------------------------: | -------------------------: |
+| MAC18        |  18,322% |        15,230% |               3,186 điểm % |             0,0 điểm Top-1 |
+| MAC20        |  20,711% |        16,177% |               5,576 điểm % |             0,5 điểm Top-1 |
+| MAC23        |  23,101% |        23,752% |               7,966 điểm % |             1,5 điểm Top-1 |
 
 MAC18 chỉ thay đổi hai layer so với MAC15:
 
@@ -202,12 +202,12 @@ Mọi run dưới đây dùng cùng ResNet-18, ImageNet validation, preprocessin
 42, T4, performance batch 1, 30 warm-up và 100 iteration. Checkpoint đều load
 exact với `missing_keys=[]`, `unexpected_keys=[]`.
 
-| Run | Top-1 | Top-5 | Giảm parameter | Giảm MAC | Median | P95 | Throughput |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Dense | 69,754% | 89,080% | 0% | 0% | 3,778 ms | 4,734 ms | 264,69 mẫu/s |
-| MAC15 epoch 3 | 69,648% | 89,190% | 13,876% | 15,135% | 13,396 ms | 14,193 ms | 74,65 mẫu/s |
-| MAC18 trước fine-tune | 69,536% | 89,078% | 15,216% | 18,322% | 15,714 ms | 17,039 ms | 63,64 mẫu/s |
-| MAC18 epoch 1 sau fine-tune | **69,654%** | **89,124%** | **15,216%** | **18,322%** | 15,552 ms | 17,250 ms | 64,30 mẫu/s |
+| Run                         |       Top-1 |       Top-5 | Giảm parameter |    Giảm MAC |    Median |       P95 |   Throughput |
+| --------------------------- | ----------: | ----------: | -------------: | ----------: | --------: | --------: | -----------: |
+| Dense                       |     69,754% |     89,080% |             0% |          0% |  3,778 ms |  4,734 ms | 264,69 mẫu/s |
+| MAC15 epoch 3               |     69,648% |     89,190% |        13,876% |     15,135% | 13,396 ms | 14,193 ms |  74,65 mẫu/s |
+| MAC18 trước fine-tune       |     69,536% |     89,078% |        15,216% |     18,322% | 15,714 ms | 17,039 ms |  63,64 mẫu/s |
+| MAC18 epoch 1 sau fine-tune | **69,654%** | **89,124%** |    **15,216%** | **18,322%** | 15,552 ms | 17,250 ms |  64,30 mẫu/s |
 
 Fine-tune phục hồi 0,118 điểm Top-1. So với dense, MAC18 mất 0,100 điểm Top-1
 nhưng giảm 18,322% effective MAC. So với MAC15, nó giảm thêm 3,186 điểm phần
@@ -224,10 +224,10 @@ checkpoint. Vì vậy **không có kết quả MAC18 epoch 3 hợp lệ**.
 
 Hai checkpoint hợp lệ được screen trên cùng 5.000 ảnh:
 
-| Checkpoint | Top-1 5k | Top-5 5k | Quyết định |
-| --- | ---: | ---: | --- |
-| Epoch 1 | **71,560%** | 89,860% | Chọn theo Top-1 |
-| Epoch 2 | 71,500% | **90,040%** | Không chọn |
+| Checkpoint |    Top-1 5k |    Top-5 5k | Quyết định      |
+| ---------- | ----------: | ----------: | --------------- |
+| Epoch 1    | **71,560%** |     89,860% | Chọn theo Top-1 |
+| Epoch 2    |     71,500% | **90,040%** | Không chọn      |
 
 Benchmark đủ 50.000 ảnh dùng checkpoint epoch 1 đúng theo tiêu chí Top-1 đã
 định trước. Kết quả này hợp lệ cho protocol fine-tune một epoch được chọn, nhưng
