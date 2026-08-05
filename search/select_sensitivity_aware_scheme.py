@@ -12,16 +12,36 @@ import subprocess
 
 try:  # Support both ``python search/file.py`` and package imports in tests.
     from .hardware_cost import HardwareCostModel
-    from .layer_sensitivity import LayerSensitivityProfile, SENSITIVITY_METRICS
+    from .layer_sensitivity import (
+        LayerSensitivityProfile,
+        SENSITIVITY_METRICS,
+        file_sha256,
+        load_nm_scheme,
+        validate_scheme_layers,
+    )
 except ImportError:  # pragma: no cover - exercised by the CLI form
     from hardware_cost import HardwareCostModel
-    from layer_sensitivity import LayerSensitivityProfile, SENSITIVITY_METRICS
+    from layer_sensitivity import (
+        LayerSensitivityProfile,
+        SENSITIVITY_METRICS,
+        file_sha256,
+        load_nm_scheme,
+        validate_scheme_layers,
+    )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hardware-profile", type=Path, required=True)
     parser.add_argument("--sensitivity-profile", type=Path, required=True)
+    parser.add_argument(
+        "--base-scheme-file",
+        type=Path,
+        help=(
+            "Continue from a conditioned pruning stage. Candidates are restricted "
+            "to the same or greater sparsity than each layer's base N:M."
+        ),
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--target-reduction", type=float, required=True)
     parser.add_argument(
@@ -61,6 +81,7 @@ def choose_scheme(
     minimum_n: int = 1,
     protect_first_conv: bool = False,
     protect_linear: bool = False,
+    base_scheme: dict[str, list[int]] | None = None,
 ) -> tuple[dict[str, list[int]], float]:
     """Multiple-choice Pareto search minimizing additive measured sensitivity."""
 
@@ -79,7 +100,21 @@ def choose_scheme(
             for candidate in layer["candidates"]
         }
     )
-    sensitivity.validate_candidates(hardware.layers, all_pairs)
+    sensitivity.validate_conditioning(base_scheme)
+    if base_scheme is not None:
+        validate_scheme_layers(base_scheme, hardware.layers, "Base scheme")
+        required_pairs = {
+            name: {
+                (int(row["n"]), int(row["m"]))
+                for row in layer["candidates"]
+                if int(row["n"]) / int(row["m"])
+                <= base_scheme[name][0] / base_scheme[name][1] + 1e-12
+            }
+            for name, layer in hardware.layers.items()
+        }
+        sensitivity.validate_candidate_map(required_pairs)
+    else:
+        sensitivity.validate_candidates(hardware.layers, all_pairs)
     first_conv = next(
         (name for name, layer in layer_items if layer.get("type") == "conv2d"), None
     )
@@ -95,6 +130,11 @@ def choose_scheme(
         if dense_pair[0] != dense_pair[1]:
             raise ValueError(f"Hardware profile has no dense N=M candidate for {name}.")
         dense_scheme[name] = list(dense_pair)
+        if base_scheme is not None and tuple(base_scheme[name]) not in pairs:
+            raise ValueError(
+                f"Base scheme candidate {name}={base_scheme[name][0]}:{base_scheme[name][1]} "
+                "is absent from the hardware profile."
+            )
         dense_value = (
             hardware.cost(name, *dense_pair)
             if target_metric == "hardware-cost"
@@ -105,8 +145,20 @@ def choose_scheme(
             protect_linear and layer.get("type") == "linear"
         )
         candidates = []
+        protected_pair = (
+            tuple(base_scheme[name]) if base_scheme is not None else dense_pair
+        )
+        base_density = (
+            base_scheme[name][0] / base_scheme[name][1]
+            if base_scheme is not None
+            else 1.0
+        )
         for n, m in pairs:
-            if n < minimum_n or (protected and n != m):
+            if (
+                n < minimum_n
+                or (protected and (n, m) != protected_pair)
+                or n / m > base_density + 1e-12
+            ):
                 continue
             candidate_value = (
                 hardware.cost(name, n, m)
@@ -178,6 +230,11 @@ def main() -> None:
     weights = None if not any(supplied) else {key: float(value) for key, value in overrides.items()}
     hardware = HardwareCostModel(args.hardware_profile, mode="lookup", weights=weights)
     sensitivity = LayerSensitivityProfile(args.sensitivity_profile)
+    base_scheme = (
+        load_nm_scheme(args.base_scheme_file)
+        if args.base_scheme_file is not None
+        else None
+    )
     scheme, estimated_sensitivity = choose_scheme(
         hardware,
         sensitivity,
@@ -187,6 +244,7 @@ def main() -> None:
         args.minimum_n,
         args.protect_first_conv,
         args.protect_linear,
+        base_scheme,
     )
     if (
         args.max_estimated_sensitivity is not None
@@ -213,6 +271,39 @@ def main() -> None:
         "mac_reduction": 1.0 - effective_macs / dense_macs,
         "estimated_additive_sensitivity": estimated_sensitivity,
     }
+    base_manifest = None
+    if base_scheme is not None:
+        base_effective_parameters = sum(
+            float(row["features"]["dense_parameters"])
+            * base_scheme[name][0]
+            / base_scheme[name][1]
+            for name, row in hardware.layers.items()
+        )
+        base_effective_macs = sum(
+            float(row["features"]["dense_macs"])
+            * base_scheme[name][0]
+            / base_scheme[name][1]
+            for name, row in hardware.layers.items()
+        )
+        base_parameter_reduction = 1.0 - base_effective_parameters / dense_parameters
+        base_mac_reduction = 1.0 - base_effective_macs / dense_macs
+        achieved.update(
+            {
+                "base_parameter_reduction": base_parameter_reduction,
+                "base_mac_reduction": base_mac_reduction,
+                "additional_parameter_reduction_from_base": (
+                    achieved["parameter_reduction"] - base_parameter_reduction
+                ),
+                "additional_mac_reduction_from_base": (
+                    achieved["mac_reduction"] - base_mac_reduction
+                ),
+            }
+        )
+        base_manifest = {
+            "path": str(args.base_scheme_file.expanduser().resolve()),
+            "sha256": file_sha256(args.base_scheme_file),
+            "scheme": base_scheme,
+        }
     output = args.output.expanduser().resolve()
     manifest_path = Path(str(output) + ".json")
     if output.exists() or manifest_path.exists():
@@ -221,7 +312,11 @@ def main() -> None:
     output.write_text(repr(scheme) + "\n", encoding="utf-8")
     manifest = {
         "schema_version": 1,
-        "method": "sensitivity-aware-hardware-mixed-nm",
+        "method": (
+            "conditioned-sensitivity-aware-hardware-mixed-nm"
+            if base_scheme is not None
+            else "sensitivity-aware-hardware-mixed-nm"
+        ),
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "source": {
             "branch": git_value("branch", "--show-current"),
@@ -236,8 +331,10 @@ def main() -> None:
             "minimum_n": args.minimum_n,
             "protect_first_conv": args.protect_first_conv,
             "protect_linear": args.protect_linear,
+            "monotonic_from_base": base_scheme is not None,
             "note": "Layer sensitivities are additive estimates and require end-to-end validation.",
         },
+        "base_scheme": base_manifest,
         "hardware_profile": asdict(hardware.manifest()),
         "sensitivity_profile": sensitivity.manifest(),
         "achieved": achieved,

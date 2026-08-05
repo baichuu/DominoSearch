@@ -29,13 +29,26 @@ from benchmark_model import (  # noqa: E402
 )
 from devkit.sparse_ops import SparseConv, SparseLinear  # noqa: E402
 from imagenet_data import parquet_manifest  # noqa: E402
-from layer_sensitivity import SCHEMA_VERSION, file_sha256  # noqa: E402
+from layer_sensitivity import (  # noqa: E402
+    SCHEMA_VERSION,
+    file_sha256,
+    load_nm_scheme,
+    validate_scheme_layers,
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default="resnet18_sparse")
     parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument(
+        "--base-scheme-file",
+        type=Path,
+        help=(
+            "Measure every candidate while all other layers use this scheme. "
+            "Use the checkpoint fine-tuned for the same scheme."
+        ),
+    )
     parser.add_argument("--m", type=int, default=16)
     parser.add_argument("--candidate-n", type=int, nargs="+", default=[1, 2, 4, 8, 16])
     parser.add_argument("--layout", choices=("NCHW", "NHWC"), default="NHWC")
@@ -171,16 +184,31 @@ def main() -> None:
     names = [module.get_name() for module in layers]
     if not layers or len(set(names)) != len(names):
         raise ValueError("Sparse layer names must be non-empty and unique.")
+    base_scheme = (
+        load_nm_scheme(args.base_scheme_file)
+        if args.base_scheme_file is not None
+        else {name: [args.m, args.m] for name in names}
+    )
+    validate_scheme_layers(base_scheme, names, "Base scheme")
     for module in layers:
         if module.weight.numel() % args.m:
             raise ValueError(f"Layer {module.get_name()} weight count is not divisible by M={args.m}.")
-        module.apply_N_M(args.m, args.m)
+        n, m = base_scheme[module.get_name()]
+        if m != args.m or n not in candidates:
+            raise ValueError(
+                f"Base scheme {module.get_name()}={n}:{m} must use M={args.m} "
+                "and an N listed in --candidate-n."
+            )
+        module.apply_N_M(n, m)
 
     baseline = measure(model, loader, device, args.max_eval_samples)
     profile_layers = []
     for index, module in enumerate(layers, start=1):
+        base_n, base_m = base_scheme[module.get_name()]
         rows = []
         for n in candidates:
+            if args.base_scheme_file is not None and n / args.m > base_n / base_m:
+                continue
             module.apply_N_M(n, args.m)
             observed = measure(model, loader, device, args.max_eval_samples)
             if observed["samples"] != baseline["samples"]:
@@ -203,7 +231,7 @@ def main() -> None:
                 f"top1={observed['top1_percent']:.3f}% "
                 f"drop={baseline['top1_percent'] - observed['top1_percent']:.3f} pp"
             )
-        module.apply_N_M(args.m, args.m)
+        module.apply_N_M(base_n, base_m)
         profile_layers.append(
             {
                 "name": module.get_name(),
@@ -215,7 +243,11 @@ def main() -> None:
 
     profile = {
         "schema_version": SCHEMA_VERSION,
-        "method": "one-layer-at-a-time-nm-sensitivity",
+        "method": (
+            "conditioned-one-layer-at-a-time-nm-sensitivity"
+            if args.base_scheme_file is not None
+            else "one-layer-at-a-time-nm-sensitivity"
+        ),
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "source": {
             "branch": git_value("branch", "--show-current"),
@@ -237,9 +269,22 @@ def main() -> None:
         "measurement": {
             "seed": args.seed,
             "baseline": baseline,
-            "protocol": "one sparse layer at a time; all other sparse layers dense",
+            "protocol": (
+                "one candidate layer at a time; all other sparse layers use base_scheme"
+                if args.base_scheme_file is not None
+                else "one sparse layer at a time; all other sparse layers dense"
+            ),
             "warning": "Layer deltas are selection estimates, not additive accuracy guarantees.",
         },
+        "base_scheme_file": (
+            {
+                "path": str(args.base_scheme_file.expanduser().resolve()),
+                "sha256": file_sha256(args.base_scheme_file),
+            }
+            if args.base_scheme_file is not None
+            else None
+        ),
+        "base_scheme": base_scheme if args.base_scheme_file is not None else None,
         "candidate_n": candidates,
         "m": args.m,
         "layers": profile_layers,

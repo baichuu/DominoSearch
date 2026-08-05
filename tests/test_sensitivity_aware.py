@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from search.hardware_cost import HardwareCostModel
-from search.layer_sensitivity import LayerSensitivityProfile
+from search.layer_sensitivity import LayerSensitivityProfile, load_nm_scheme
 from search.select_sensitivity_aware_scheme import choose_scheme
 
 
@@ -74,11 +74,50 @@ def sensitivity_layer(name, sparse_drop):
     }
 
 
+def staged_hardware_layer(name, dense_macs):
+    layer = hardware_layer(name, "conv2d", dense_macs, 0.5)
+    layer["candidates"].insert(
+        1,
+        {
+            "n": 3,
+            "m": 4,
+            "metrics": {
+                "latency_ms": 0.75,
+                "energy_mj": None,
+                "bandwidth_bytes": 750,
+                "memory_bytes": 750,
+            },
+        },
+    )
+    return layer
+
+
+def staged_sensitivity_layer(name, drop_2, drop_3, base_n):
+    drops = ((2, drop_2), (3, drop_3), (4, -0.1 if base_n < 4 else 0.0))
+    return {
+        "name": name,
+        "candidates": [
+            {
+                "n": n,
+                "m": 4,
+                "sensitivity": {
+                    "loss_increase": drop,
+                    "top1_drop_percent": drop,
+                    "top5_drop_percent": drop,
+                },
+            }
+            for n, drop in drops
+            if n <= base_n
+        ],
+    }
+
+
 class SensitivityAwareSchemeTest(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
+        self.root = root
         hardware = {
             "schema_version": 1,
             "hardware": {"name": "synthetic"},
@@ -155,6 +194,80 @@ class SensitivityAwareSchemeTest(unittest.TestCase):
     def test_profile_requires_exact_layer_coverage(self):
         with self.assertRaisesRegex(ValueError, "does not exactly match"):
             self.sensitivity.validate_candidates(["first"], [(2, 4), (4, 4)])
+
+    def _conditioned_models(self, root):
+        hardware = {
+            "schema_version": 1,
+            "hardware": {"name": "synthetic"},
+            "model": {"name": "tiny", "layout": "NCHW"},
+            "cost_definition": {
+                "weights": {
+                    "latency_ms": 1.0,
+                    "energy_mj": 0.0,
+                    "bandwidth_bytes": 0.0,
+                    "memory_bytes": 0.0,
+                }
+            },
+            "layers": [
+                staged_hardware_layer("first", 100),
+                staged_hardware_layer("second", 300),
+            ],
+        }
+        base = {"first": [3, 4], "second": [4, 4]}
+        sensitivity = {
+            "schema_version": 1,
+            "method": "conditioned-one-layer-at-a-time-nm-sensitivity",
+            "base_scheme": base,
+            "model": {"name": "tiny"},
+            "dataset": {"samples": 10},
+            "measurement": {"baseline": {"top1_percent": 80}},
+            "layers": [
+                staged_sensitivity_layer("first", 5.0, 0.0, 3),
+                staged_sensitivity_layer("second", 1.0, 0.1, 4),
+            ],
+        }
+        hardware_path = root / "staged-hardware.json"
+        sensitivity_path = root / "staged-sensitivity.json"
+        hardware_path.write_text(json.dumps(hardware), encoding="utf-8")
+        sensitivity_path.write_text(json.dumps(sensitivity), encoding="utf-8")
+        return (
+            HardwareCostModel(hardware_path, mode="lookup"),
+            LayerSensitivityProfile(sensitivity_path),
+            base,
+        )
+
+    def test_conditioned_search_only_keeps_or_increases_layer_sparsity(self):
+        hardware, sensitivity, base = self._conditioned_models(self.root)
+        scheme, _ = choose_scheme(
+            hardware,
+            sensitivity,
+            0.20,
+            "macs",
+            "top1_drop_percent",
+            base_scheme=base,
+        )
+        self.assertNotEqual(scheme["first"], [4, 4])
+        self.assertLessEqual(scheme["first"][0] / scheme["first"][1], 3 / 4)
+        self.assertLessEqual(scheme["second"][0] / scheme["second"][1], 1.0)
+
+    def test_conditioned_profile_requires_matching_base_scheme(self):
+        hardware, sensitivity, base = self._conditioned_models(self.root)
+        wrong = {**base, "first": [4, 4]}
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            choose_scheme(
+                hardware,
+                sensitivity,
+                0.20,
+                "macs",
+                "loss_increase",
+                base_scheme=wrong,
+            )
+
+    def test_scheme_loader_rejects_empty_scheme(self):
+        path = self.root / "empty-scheme.txt"
+        path.write_text("{}\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "non-empty"):
+            load_nm_scheme(path)
 
 
 if __name__ == "__main__":

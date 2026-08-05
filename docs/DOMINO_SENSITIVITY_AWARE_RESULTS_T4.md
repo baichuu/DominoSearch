@@ -182,8 +182,9 @@ epoch 3: 556fc1af171f3fc12c865233d31d7697d1474c77ba52a3859aa624eba3c9b36f
 
 ## 10. Hướng tiếp theo
 
-1. Profile sensitivity bằng 5.000 ảnh hoặc dùng iterative re-profiling để giảm
-   sai số do cộng độc lập sensitivity giữa các layer.
+1. Dùng staged/conditioned re-profiling từ checkpoint MAC15 để giảm sai số do
+   cộng độc lập sensitivity giữa các layer. Code và protocol nằm tại
+   [`DOMINO_STAGED_MIXED_NM.md`](DOMINO_STAGED_MIXED_NM.md).
 2. Tạo thêm target MAC17–18 để tìm điểm nằm giữa MAC15 và MAC20, chỉ fine-tune
    nếu full pre-fine-tune đạt cổng accuracy.
 3. Muốn so trực tiếp Uniform 3:4, phải cải thiện scheme ở đúng khoảng 23,1% MAC

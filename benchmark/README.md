@@ -220,3 +220,11 @@ từng layer và selector kết hợp sensitivity với hardware lookup. Hướn
 lệnh đầy đủ và protocol Jetson Nano nằm tại
 [`docs/DOMINO_MIXED_PRE_BOARD_PLAN.md`](../docs/DOMINO_MIXED_PRE_BOARD_PLAN.md).
 Pipeline này không thay đổi benchmark dense hay DominoSearch mặc định.
+
+Hướng staged mới đo lại sensitivity từ checkpoint/scheme đã prune, sau đó chỉ
+cho phép giữ nguyên hoặc tăng sparsity từng layer. Protocol MAC15 → MAC18/20/23,
+cổng accuracy và lệnh Colab nằm tại
+[`docs/DOMINO_STAGED_MIXED_NM.md`](../docs/DOMINO_STAGED_MIXED_NM.md). Hai flag
+liên quan là `profile_layer_sensitivity.py --base-scheme-file` và
+`select_sensitivity_aware_scheme.py --base-scheme-file`; bỏ flag thì hành vi dense
+profile cũ được giữ nguyên.
