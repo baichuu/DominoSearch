@@ -199,9 +199,21 @@ Nguồn nghiên cứu chính:
 - [Importance Estimation for Neural Network Pruning — CVPR 2019](https://openaccess.thecvf.com/content_CVPR_2019/html/Molchanov_Importance_Estimation_for_Neural_Network_Pruning_CVPR_2019_paper.html);
 - [SynFlow — NeurIPS 2020](https://papers.nips.cc/paper/2020/hash/46a4378f835dc8040c8057beb6a2da52-Abstract.html), tham khảo cho rủi ro layer collapse.
 
-## 9. Điều gì được và chưa được chứng minh
+## 9. Trạng thái sau thí nghiệm 2026-08-05
 
-Code hiện tại mới **sẵn sàng để đánh giá**. Unit test chứng minh validation
-profile/selector, target MAC/cost và boundary protection hoạt động trên dữ liệu
-tổng hợp. Chưa có sensitivity artifact ImageNet mới và chưa chạy fine-tune, nên
-chưa được gọi scheme mới là tốt hơn, nhanh hơn hoặc tối ưu hơn Uniform 3:4.
+Pipeline đã được chạy trên ResNet-18/ImageNet và Tesla T4. Scheme MAC15 sau ba
+epoch fine-tune đạt 69,648% Top-1 trên đủ 50.000 ảnh, giảm 15,135% effective MAC
+và 13,876% effective parameter. Nó chỉ thấp hơn dense 0,106 điểm Top-1.
+
+Kết quả chứng minh hướng sensitivity-aware giữ accuracy tốt hơn các Domino mixed
+run trước tại điểm resource đã thử. Nó không chứng minh runtime speedup: median
+latency PyTorch là 13,396 ms, còn dense là 3,778 ms, vì implementation vẫn mask
+rồi gọi dense operator.
+
+MAC15 giảm MAC ít hơn Uniform 3:4, nên chưa phải so sánh cùng budget. Scheme
+MAC23 cùng khoảng 23,1% MAC không đạt cổng accuracy trước fine-tune. Bước tiếp
+theo là cải thiện sensitivity profile/interaction hoặc thử target trung gian,
+sau đó đo lại cost trên Jetson khi có board.
+
+Chi tiết protocol, bảng trước/sau fine-tune, checkpoint và artifact nằm tại
+[`DOMINO_SENSITIVITY_AWARE_RESULTS_T4.md`](DOMINO_SENSITIVITY_AWARE_RESULTS_T4.md).
