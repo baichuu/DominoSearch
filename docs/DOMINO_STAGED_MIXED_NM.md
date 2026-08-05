@@ -158,6 +158,58 @@ nhiều hơn MAC15 và vẫn đạt cổng accuracy. Chỉ được gọi là **
 khi benchmark end-to-end trên chính board chứng minh latency/throughput tốt hơn
 dense trong cùng điều kiện.
 
+## 9. Trạng thái chạy ngày 2026-08-05
+
+Pipeline đã được chạy trên một Colab Tesla T4 từ commit `706a37f`. Input được
+kiểm tra trước khi chạy:
+
+- 14 validation shard, tổng `6.693.093.726` byte;
+- checkpoint MAC15 epoch 3 có SHA-256
+  `556fc1af171f3fc12c865233d31d7697d1474c77ba52a3859aa624eba3c9b36f`;
+- checkpoint load exact, không có missing/unexpected key;
+- base scheme, hardware profile và conditioned profile cùng đủ 21 layer;
+- branch `pruning-domino-mixed-nm`, worktree Colab sạch.
+
+Conditioned profile 1.000 ảnh hoàn tất với baseline 72,600% Top-1, 89,500%
+Top-5. Nó chứa 53 candidate row cho 21 layer và được lưu với trạng thái debug.
+Profile 5.000 ảnh đạt baseline 71,340% Top-1 và đã đo đến layer 19/21 thì Colab
+runtime bị mất (404/401). Không có JSON hoàn chỉnh, do đó partial profile **không
+được dùng** để tạo scheme hoặc làm bằng chứng cuối.
+
+Selector dùng profile 1.000 ảnh đã tạo ba debug scheme monotonic:
+
+| Scheme debug | Giảm MAC | Giảm parameter | Giảm MAC thêm so với MAC15 | Sensitivity cộng ước lượng |
+| --- | ---: | ---: | ---: | ---: |
+| MAC18 | 18,322% | 15,230% | 3,186 điểm % | 0,0 điểm Top-1 |
+| MAC20 | 20,711% | 16,177% | 5,576 điểm % | 0,5 điểm Top-1 |
+| MAC23 | 23,101% | 23,752% | 7,966 điểm % | 1,5 điểm Top-1 |
+
+MAC18 chỉ thay đổi hai layer so với MAC15:
+
+```text
+SparseConv4_64-64-(3, 3):     4:4 -> 3:4
+SparseConv14_256-256-(3, 3):  4:4 -> 3:4
+```
+
+Nó là ứng viên nên benchmark trước vì đạt target với sensitivity proxy thấp
+nhất. Tuy nhiên, cả ba scheme vẫn là debug: chưa có full-val accuracy trước/sau
+fine-tune và chưa chứng minh latency. Hai lần xin T4 session mới sau khi runtime
+mất đều trả `503 Service Unavailable`, nên vòng chạy dừng tại cổng này.
+
+Artifact đã lưu trên Drive:
+
+```text
+profiles/resnet18-m4-conditioned-mac15-1k-debug-20260805.json
+logs/resnet18-m4-conditioned-mac15-1k-debug-20260805.log
+logs/resnet18-m4-conditioned-mac15-5k-interrupted-partial-20260805.log
+schemes/domino-staged-mac18-from-mac15-debug-20260805.txt[.json]
+schemes/domino-staged-mac20-from-mac15-debug-20260805.txt[.json]
+schemes/domino-staged-mac23-from-mac15-debug-20260805.txt[.json]
+```
+
+Bước tiếp theo khi có T4 là benchmark MAC18 trên 1.000 ảnh, sau đó đủ 50.000
+ảnh. Chỉ fine-tune nếu nó đạt cổng tại mục 5. MAC20 và MAC23 chờ sau MAC18.
+
 Nguồn tham khảo:
 
 - DominoSearch: `assets/DominoSearch.pdf`, đặc biệt mục tiêu complexity có thể là
