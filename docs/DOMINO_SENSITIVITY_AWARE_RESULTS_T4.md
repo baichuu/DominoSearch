@@ -9,13 +9,13 @@
 ## 1. Kết luận ngắn
 
 Scheme sensitivity-aware MAC15 sau ba epoch fine-tune đạt **69,648% Top-1** trên
-đủ 50.000 ảnh ImageNet validation. So với dense 69,754%, model chỉ mất **0,106
-điểm phần trăm Top-1**, trong khi giảm **15,135% effective MAC** và **13,876%
-effective parameter**.
+đủ 50.000 ảnh ImageNet validation. Vòng staged tiếp theo đã tạo MAC18 epoch 1
+đạt **69,654% Top-1**, giảm **18,322% effective MAC** và **15,216% effective
+parameter**. So với dense 69,754%, MAC18 chỉ mất 0,100 điểm Top-1.
 
-Đây là điểm accuracy–MAC tốt nhất hiện có của **Domino mixed N:M** trong các run
-đã kiểm tra. Nó không chứng minh model chạy nhanh hơn trên T4: median latency
-13,396 ms vẫn chậm hơn dense 3,778 ms khoảng 3,55 lần. Nguyên nhân là sparse
+MAC18 là điểm accuracy–MAC tốt nhất hiện có của **Domino mixed N:M** trong các
+run đã kiểm tra. Nó không chứng minh model chạy nhanh hơn trên T4: median latency
+15,552 ms vẫn chậm hơn dense 3,778 ms khoảng 4,12 lần. Nguyên nhân là sparse
 layer hiện tạo mask rồi gọi dense PyTorch operator.
 
 Không được diễn giải kết quả này thành speedup trên Jetson, CPU hoặc FPGA. Các
@@ -126,7 +126,8 @@ hơn 0,110 điểm. Mức giảm effective parameter/MAC không đổi, đúng v
 
 | Phương án sau fine-tune | Top-1 | Giảm parameter | Giảm MAC | Nhận xét |
 | --- | ---: | ---: | ---: | --- |
-| Sensitivity-aware MAC15 | **69,648%** | 13,876% | 15,135% | Accuracy cao nhất trong Domino mixed hiện có |
+| Staged sensitivity-aware MAC18 | **69,654%** | 15,216% | 18,322% | Accuracy gần dense, giảm MAC nhiều nhất trong các run gần-dense |
+| Sensitivity-aware MAC15 | 69,648% | 13,876% | 15,135% | Stage nền; gần ngang MAC18 về accuracy |
 | Uniform 3:4 conservative | 68,388% | 23,494% | 23,101% | Giảm resource nhiều hơn nhưng mất thêm 1,260 điểm Top-1 |
 | Domino params-23 | 67,996% | 30,275% | 9,559% | Giảm parameter mạnh, nhưng giảm MAC ít và accuracy thấp hơn |
 
@@ -182,11 +183,11 @@ epoch 3: 556fc1af171f3fc12c865233d31d7697d1474c77ba52a3859aa624eba3c9b36f
 
 ## 10. Hướng tiếp theo
 
-1. Dùng staged/conditioned re-profiling từ checkpoint MAC15 để giảm sai số do
-   cộng độc lập sensitivity giữa các layer. Code và protocol nằm tại
+1. Staged/conditioned re-profiling từ checkpoint MAC15 đã tạo được MAC18. Kết
+   quả và protocol nằm tại
    [`DOMINO_STAGED_MIXED_NM.md`](DOMINO_STAGED_MIXED_NM.md).
-2. Tạo thêm target MAC17–18 để tìm điểm nằm giữa MAC15 và MAC20, chỉ fine-tune
-   nếu full pre-fine-tune đạt cổng accuracy.
+2. Profile conditioned lại từ checkpoint MAC18 epoch 1 rồi mới thử target
+   MAC20; không dùng scheme debug MAC20 hiện có làm bằng chứng cuối.
 3. Muốn so trực tiếp Uniform 3:4, phải cải thiện scheme ở đúng khoảng 23,1% MAC
    và dùng cùng fine-tune budget.
 4. Khi có Jetson Nano, đo lại lookup `layer × N:M` trên chính Jetson và chỉ cho
@@ -196,7 +197,9 @@ epoch 3: 556fc1af171f3fc12c865233d31d7697d1474c77ba52a3859aa624eba3c9b36f
 
 ## 11. Kết luận
 
-Thí nghiệm chứng minh sensitivity-aware selection kết hợp fine-tune LR thấp có
-thể tạo ResNet-18 mixed N:M giảm 15,135% effective MAC với gần như giữ nguyên
-Top-1. Nó là **ứng viên sẵn sàng để chuyển sang đo trên phần cứng mục tiêu**, chưa
-phải bằng chứng model nhanh hơn hay nhỏ hơn trên T4/Jetson/FPGA.
+Thí nghiệm chứng minh sensitivity-aware selection kết hợp staged pruning và
+fine-tune LR thấp có thể tạo ResNet-18 mixed N:M giảm 18,322% effective MAC với
+gần như giữ nguyên Top-1. MAC18 là **ứng viên sẵn sàng để chuyển sang đo trên
+phần cứng mục tiêu**, chưa phải bằng chứng model nhanh hơn hay nhỏ hơn trên
+T4/Jetson/FPGA. Fine-tune MAC18 chỉ có hai checkpoint hợp lệ và epoch 1 được
+chọn; epoch 3 thất bại do rclone FUSE I/O nên không được báo cáo như run ba epoch.

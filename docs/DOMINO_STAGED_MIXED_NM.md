@@ -160,7 +160,8 @@ dense trong cùng điều kiện.
 
 ## 9. Trạng thái chạy ngày 2026-08-05
 
-Pipeline đã được chạy trên một Colab Tesla T4 từ commit `706a37f`. Input được
+Pipeline đã được chạy trên Colab Tesla T4 từ commit `706a37f`; benchmark cuối
+được ghi nhận ở commit `5e999fe`. Input được
 kiểm tra trước khi chạy:
 
 - 14 validation shard, tổng `6.693.093.726` byte;
@@ -191,10 +192,54 @@ SparseConv4_64-64-(3, 3):     4:4 -> 3:4
 SparseConv14_256-256-(3, 3):  4:4 -> 3:4
 ```
 
-Nó là ứng viên nên benchmark trước vì đạt target với sensitivity proxy thấp
-nhất. Tuy nhiên, cả ba scheme vẫn là debug: chưa có full-val accuracy trước/sau
-fine-tune và chưa chứng minh latency. Hai lần xin T4 session mới sau khi runtime
-mất đều trả `503 Service Unavailable`, nên vòng chạy dừng tại cổng này.
+Nó được chọn vì đạt target với sensitivity proxy thấp nhất. Profile dùng để sinh
+scheme vẫn mang nhãn debug do chỉ dùng 1.000 ảnh, nhưng MAC18 sau đó đã vượt qua
+benchmark end-to-end đủ 50.000 ảnh trước và sau fine-tune.
+
+### 9.1. Kết quả MAC18 đủ 50.000 ảnh
+
+Mọi run dưới đây dùng cùng ResNet-18, ImageNet validation, preprocessing, seed
+42, T4, performance batch 1, 30 warm-up và 100 iteration. Checkpoint đều load
+exact với `missing_keys=[]`, `unexpected_keys=[]`.
+
+| Run | Top-1 | Top-5 | Giảm parameter | Giảm MAC | Median | P95 | Throughput |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Dense | 69,754% | 89,080% | 0% | 0% | 3,778 ms | 4,734 ms | 264,69 mẫu/s |
+| MAC15 epoch 3 | 69,648% | 89,190% | 13,876% | 15,135% | 13,396 ms | 14,193 ms | 74,65 mẫu/s |
+| MAC18 trước fine-tune | 69,536% | 89,078% | 15,216% | 18,322% | 15,714 ms | 17,039 ms | 63,64 mẫu/s |
+| MAC18 epoch 1 sau fine-tune | **69,654%** | **89,124%** | **15,216%** | **18,322%** | 15,552 ms | 17,250 ms | 64,30 mẫu/s |
+
+Fine-tune phục hồi 0,118 điểm Top-1. So với dense, MAC18 mất 0,100 điểm Top-1
+nhưng giảm 18,322% effective MAC. So với MAC15, nó giảm thêm 3,186 điểm phần
+trăm MAC và Top-1 cao hơn 0,006 điểm. Chênh lệch accuracy này quá nhỏ để tuyên
+bố MAC18 chính xác hơn; hai model được xem là gần như ngang accuracy.
+
+### 9.2. Fine-tune và sự cố epoch 3
+
+MAC18 được khởi tạo đúng từ checkpoint MAC15 epoch 3 rồi fine-tune với LR
+0,001, 50.000 training sample mỗi epoch và validation nội bộ 1.000 ảnh. Epoch 1
+đạt 72,600% Top-1, epoch 2 đạt 72,800%. Epoch 3 đã bắt đầu nhưng rclone FUSE trả
+`OSError: [Errno 5] Input/output error` trước validation và trước khi lưu
+checkpoint. Vì vậy **không có kết quả MAC18 epoch 3 hợp lệ**.
+
+Hai checkpoint hợp lệ được screen trên cùng 5.000 ảnh:
+
+| Checkpoint | Top-1 5k | Top-5 5k | Quyết định |
+| --- | ---: | ---: | --- |
+| Epoch 1 | **71,560%** | 89,860% | Chọn theo Top-1 |
+| Epoch 2 | 71,500% | **90,040%** | Không chọn |
+
+Benchmark đủ 50.000 ảnh dùng checkpoint epoch 1 đúng theo tiêu chí Top-1 đã
+định trước. Kết quả này hợp lệ cho protocol fine-tune một epoch được chọn, nhưng
+chưa phải so sánh cùng budget ba epoch với MAC15.
+
+### 9.3. Diễn giải đúng
+
+MAC18 hiện là ứng viên accuracy–complexity tốt nhất trong các staged run đã đo:
+nó gần giữ nguyên dense accuracy và giảm MAC nhiều hơn MAC15. Nó **không nhanh
+hơn trên T4**. Median 15,552 ms chậm hơn dense khoảng 4,12 lần vì implementation
+hiện tạo mask rồi gọi dense PyTorch operator. Effective MAC/parameter là mức
+giảm lý thuyết; không phải bằng chứng speedup, file nhỏ hơn hoặc Jetson nhanh hơn.
 
 Artifact đã lưu trên Drive:
 
@@ -205,10 +250,28 @@ logs/resnet18-m4-conditioned-mac15-5k-interrupted-partial-20260805.log
 schemes/domino-staged-mac18-from-mac15-debug-20260805.txt[.json]
 schemes/domino-staged-mac20-from-mac15-debug-20260805.txt[.json]
 schemes/domino-staged-mac23-from-mac15-debug-20260805.txt[.json]
+results/domino-staged-mac18-from-mac15-full-before-20260805.json
+results/domino-staged-mac18-epoch1-full-after-20260805.json
+results/domino-staged-mac18-comparison-20260805.md
+results/domino-staged-mac18-comparison-20260805.csv
+results/debug/domino-staged-mac18-epoch1-5k-screen-20260805.json
+results/debug/domino-staged-mac18-epoch2-5k-screen-20260805.json
+logs/domino-staged-mac18-lr001-3epoch-train50k-20260805.log
+runs/domino-staged-mac18-lr001-3epoch-train50k-20260805/model.pth-1
+runs/domino-staged-mac18-lr001-3epoch-train50k-20260805/model.pth-2
 ```
 
-Bước tiếp theo khi có T4 là benchmark MAC18 trên 1.000 ảnh, sau đó đủ 50.000
-ảnh. Chỉ fine-tune nếu nó đạt cổng tại mục 5. MAC20 và MAC23 chờ sau MAC18.
+Checkpoint SHA-256:
+
+```text
+epoch 1: 3f4a81f0f0eec1a1f4c3ce2d16b4b2884f02d01730ea449d95c5785932058ca0
+epoch 2: 9f9ede1e03b5b87699127891c82c4156d1cc0d717b04e0e204b0ce29d60e01d1
+```
+
+Bước tiếp theo là profile conditioned lại từ checkpoint MAC18 epoch 1, ưu tiên
+5.000 ảnh nếu runtime cho phép, rồi mới sinh ứng viên khoảng MAC20. Không dùng
+thẳng scheme MAC20 debug hiện có làm kết luận cuối vì nó được suy ra từ profile
+1.000 ảnh của checkpoint MAC15 và chưa qua full-val gate.
 
 Nguồn tham khảo:
 
