@@ -273,7 +273,137 @@ Bước tiếp theo là profile conditioned lại từ checkpoint MAC18 epoch 1,
 thẳng scheme MAC20 debug hiện có làm kết luận cuối vì nó được suy ra từ profile
 1.000 ảnh của checkpoint MAC15 và chưa qua full-val gate.
 
-Nguồn tham khảo:
+## 10. Kế hoạch thí nghiệm tiếp theo
+
+### 10.1. Mốc xuất phát
+
+Đóng băng MAC18 epoch 1 làm checkpoint đầu vào của vòng tiếp theo:
+
+```text
+Top-1:                       69,654%
+Top-5:                       89,124%
+Effective MAC reduction:    18,322%
+Effective param reduction:  15,216%
+```
+
+Không quay lại dense hoặc MAC15 để sinh stage mới. Dense, MAC15 và MAC18 vẫn
+được giữ làm các mốc so sánh.
+
+### 10.2. Conditioned profile từ MAC18
+
+1. Load exact checkpoint MAC18 epoch 1 và scheme MAC18.
+2. Giữ nguyên MAC18 làm cấu hình nền.
+3. Lần lượt thử prune thêm từng layer bằng các candidate N:M hợp lệ.
+4. Đo trên cùng 5.000 validation image, cùng preprocessing và seed 42.
+5. Với mỗi candidate, ghi lại layer, cấu hình nền/thử nghiệm, Top-1/Top-5 giảm,
+   MAC/parameter giảm thêm, checkpoint, scheme, branch và commit.
+6. Xác nhận profile bao phủ chính xác 21 sparse layer và không có candidate bị
+   bỏ qua âm thầm.
+
+Profile 1.000 ảnh chỉ được dùng để debug pipeline. Scheme dùng cho kết luận phải
+được sinh từ profile 5.000 ảnh hoàn chỉnh hoặc được ghi rõ là debug nếu runtime
+không cho phép hoàn tất.
+
+### 10.3. Sinh ứng viên MAC20
+
+Selector tìm scheme monotonic đạt khoảng 20–21% effective MAC reduction với
+sensitivity cộng ước lượng nhỏ nhất:
+
+- không layer nào được chuyển về cấu hình dense hơn MAC18;
+- chỉ prune thêm các layer ít nhạy;
+- first convolution và classifier tiếp tục được bảo vệ nếu chưa có bằng chứng
+  đủ mạnh để prune;
+- scheme phải khớp chính xác toàn bộ layer mà model mong đợi;
+- scheme MAC20 debug cũ từ profile MAC15 1.000 ảnh không được dùng làm kết quả
+  cuối.
+
+### 10.4. Ba cổng đánh giá trước fine-tune
+
+**Cổng A — 1.000 ảnh debug:** kiểm tra checkpoint load exact, scheme/mask đúng,
+sparsity đo được khớp yêu cầu và accuracy không sụp đổ. Kết quả này không được
+đưa vào bảng kết luận.
+
+**Cổng B — 5.000 ảnh screening:** so MAC18 và MAC20 trên cùng prefix dataset.
+Nếu MAC20 giảm accuracy quá mạnh, quay lại selector và tạo scheme bảo thủ hơn.
+
+**Cổng C — đủ 50.000 ảnh:** chỉ cho phép fine-tune khi MAC20 đạt cả hai ngưỡng
+đề xuất:
+
+```text
+Top-1 trước fine-tune >= 68,75%
+Effective MAC reduction >= 20%
+```
+
+Các ngưỡng này là tiêu chí go/no-go của vòng nghiên cứu tiếp theo, không phải số
+liệu đã đo. Nếu không đạt, MAC20 bị loại hoặc phải được sinh lại.
+
+### 10.5. Fine-tune công bằng và ổn định dữ liệu
+
+MAC20 vượt qua full-val gate sẽ dùng cùng protocol với MAC15:
+
+```text
+Epoch:                    3
+Learning rate:            0,001
+Training sample/epoch:    50.000
+Internal validation:      1.000 ảnh
+Seed:                     42
+```
+
+Để tránh lặp lại lỗi rclone FUSE ở MAC18:
+
+1. tạo manifest cố định của đúng 50.000 training sample;
+2. copy trước các shard cần thiết vào disk local của Colab;
+3. không để DataLoader đọc training shard trực tiếp qua FUSE;
+4. lưu checkpoint local sau mỗi epoch rồi upload ngay lên Drive;
+5. ghi SHA-256 và kiểm tra file sau upload;
+6. hỗ trợ resume từ checkpoint gần nhất.
+
+Nếu cần thêm manifest/resume hoặc thay đổi data loader dùng chung cho nhiều
+nhánh, thay đổi đó phải được làm và commit trên `master` trước, sau đó mới đồng
+bộ vào nhánh thí nghiệm này.
+
+### 10.6. Chọn checkpoint và full benchmark
+
+Screen mọi checkpoint hợp lệ trên cùng 5.000 ảnh, chọn theo Top-1 đã định trước,
+rồi benchmark checkpoint được chọn trên đủ 50.000 ảnh. Bảng cuối phải có dense,
+MAC15, MAC18, MAC20 và Uniform 3:4, cùng các trường:
+
+- Top-1 và Top-5;
+- dense/effective parameter và MAC;
+- median/P95 latency và throughput;
+- peak device memory;
+- checkpoint SHA-256, scheme, branch, commit và seed.
+
+Mục tiêu chấp nhận đề xuất cho MAC20 sau fine-tune là:
+
+```text
+Top-1 >= 69,45%                 # mất không quá khoảng 0,30 điểm so với dense
+Effective MAC reduction >= 20%
+```
+
+MAC20 chỉ được gọi là tốt hơn về accuracy–complexity nếu đạt các ngưỡng này và
+giảm resource nhiều hơn MAC18. Nếu không đạt, MAC18 vẫn là model được chọn.
+
+### 10.7. Khi có Jetson
+
+1. Benchmark từng cặp `layer × N:M` trên chính Jetson.
+2. Thu thập latency, throughput, memory, power/energy và runtime version.
+3. Xây hardware lookup table hoặc cost predictor được kiểm định.
+4. Tính cost theo constraint triển khai, ví dụ:
+
+   ```text
+   Cost = alpha*latency + beta*energy + gamma*bandwidth + delta*memory
+   ```
+
+5. Chạy lại selector với cost Jetson và chỉ dùng pattern/kernel mà runtime trên
+   board thực sự hỗ trợ.
+6. So sánh scheme MAC-based với scheme Jetson-cost-based bằng benchmark
+   end-to-end trên cùng board.
+
+Chỉ benchmark trực tiếp trên Jetson mới cho phép kết luận speedup, memory hoặc
+energy thực tế. Kết quả effective MAC trên T4 không thay thế bước này.
+
+## 11. Nguồn tham khảo
 
 - DominoSearch: `assets/DominoSearch.pdf`, đặc biệt mục tiêu complexity có thể là
   model size, FLOPs, latency hoặc energy và phần layer-wise penalty;
