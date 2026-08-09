@@ -75,6 +75,13 @@ Nếu baseline trong profile gần kết quả MAC15 đã đo, chạy profile 5.
 tên output mới. Profile 1.000 ảnh chỉ là debug; selector dùng cho candidate nên
 lấy profile 5.000 ảnh.
 
+Profiler ghi tiến độ nguyên tử vào `<output>.partial.json` sau từng candidate.
+Nếu Colab bị ngắt, chạy lại đúng lệnh và thêm `--resume`; chương trình chỉ tái sử
+dụng các row khi checkpoint SHA-256, base scheme, dataset manifest, candidate,
+seed và toàn bộ cấu hình profile khớp. Khi profile hoàn tất, JSON cuối được ghi
+vào `--output` và partial file được xóa. Không dùng partial JSON cho selector hay
+báo cáo kết quả.
+
 ## 4. Chọn ba target trung gian
 
 Hardware profile phải có đúng cùng 21 layer và candidates `2:4`, `3:4`, `4:4`.

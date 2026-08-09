@@ -31,8 +31,11 @@ from devkit.sparse_ops import SparseConv, SparseLinear  # noqa: E402
 from imagenet_data import parquet_manifest  # noqa: E402
 from layer_sensitivity import (  # noqa: E402
     SCHEMA_VERSION,
+    atomic_write_json,
     file_sha256,
+    load_partial_profile,
     load_nm_scheme,
+    partial_profile_path,
     validate_scheme_layers,
 )
 
@@ -70,6 +73,15 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=5_000,
         help="Use the same deterministic prefix for every candidate; 0 means full split.",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Resume candidate measurements from <output>.partial.json. The partial "
+            "profile is validated against the current checkpoint, scheme, dataset, "
+            "candidate set, and seed before any rows are reused."
+        ),
     )
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
@@ -160,8 +172,13 @@ def main() -> None:
     args = parse_args()
     candidates = validate_args(args)
     output = args.output.expanduser().resolve()
+    partial_output = partial_profile_path(output)
     if output.exists():
         raise FileExistsError(f"Refusing to overwrite sensitivity profile: {output}")
+    if partial_output.exists() and not args.resume:
+        raise FileExistsError(
+            f"Partial profile already exists: {partial_output}. Use --resume or a new output path."
+        )
     seed_everything(args.seed)
     device = resolve_device(args.device)
     if device.type == "cuda":
@@ -202,45 +219,6 @@ def main() -> None:
         module.apply_N_M(n, m)
 
     baseline = measure(model, loader, device, args.max_eval_samples)
-    profile_layers = []
-    for index, module in enumerate(layers, start=1):
-        base_n, base_m = base_scheme[module.get_name()]
-        rows = []
-        for n in candidates:
-            if args.base_scheme_file is not None and n / args.m > base_n / base_m:
-                continue
-            module.apply_N_M(n, args.m)
-            observed = measure(model, loader, device, args.max_eval_samples)
-            if observed["samples"] != baseline["samples"]:
-                raise RuntimeError("Candidate and baseline did not evaluate the same sample count.")
-            rows.append(
-                {
-                    "n": n,
-                    "m": args.m,
-                    "density": n / args.m,
-                    "observed": observed,
-                    "sensitivity": {
-                        "loss_increase": observed["cross_entropy"] - baseline["cross_entropy"],
-                        "top1_drop_percent": baseline["top1_percent"] - observed["top1_percent"],
-                        "top5_drop_percent": baseline["top5_percent"] - observed["top5_percent"],
-                    },
-                }
-            )
-            print(
-                f"[{index}/{len(layers)}] {module.get_name()} {n}:{args.m} "
-                f"top1={observed['top1_percent']:.3f}% "
-                f"drop={baseline['top1_percent'] - observed['top1_percent']:.3f} pp"
-            )
-        module.apply_N_M(base_n, base_m)
-        profile_layers.append(
-            {
-                "name": module.get_name(),
-                "type": "conv2d" if isinstance(module, SparseConv) else "linear",
-                "dense_parameters": module.weight.numel(),
-                "candidates": rows,
-            }
-        )
-
     profile = {
         "schema_version": SCHEMA_VERSION,
         "method": (
@@ -287,10 +265,97 @@ def main() -> None:
         "base_scheme": base_scheme if args.base_scheme_file is not None else None,
         "candidate_n": candidates,
         "m": args.m,
-        "layers": profile_layers,
+        "layers": [],
+        "progress": {"status": "incomplete", "completed_candidates": 0},
+    }
+    if args.resume:
+        if not partial_output.exists():
+            raise FileNotFoundError(f"No partial sensitivity profile to resume: {partial_output}")
+        profile = load_partial_profile(partial_output, profile)
+        if profile["measurement"]["baseline"]["samples"] != baseline["samples"]:
+            raise ValueError("Resume baseline evaluated a different sample count.")
+        profile["measurement"]["baseline"] = baseline
+        print(
+            f"Resuming {profile['progress']['completed_candidates']} candidate(s) "
+            f"from {partial_output}"
+        )
+
+    saved_layers = {row["name"]: row for row in profile["layers"]}
+    profile_layers = []
+    for index, module in enumerate(layers, start=1):
+        base_n, base_m = base_scheme[module.get_name()]
+        saved_layer = saved_layers.get(module.get_name(), {})
+        rows = list(saved_layer.get("candidates", []))
+        completed_pairs = {(int(row["n"]), int(row["m"])) for row in rows}
+        for n in candidates:
+            if args.base_scheme_file is not None and n / args.m > base_n / base_m:
+                continue
+            if (n, args.m) in completed_pairs:
+                print(f"[{index}/{len(layers)}] {module.get_name()} {n}:{args.m} resumed")
+                continue
+            module.apply_N_M(n, args.m)
+            observed = measure(model, loader, device, args.max_eval_samples)
+            if observed["samples"] != baseline["samples"]:
+                raise RuntimeError("Candidate and baseline did not evaluate the same sample count.")
+            rows.append(
+                {
+                    "n": n,
+                    "m": args.m,
+                    "density": n / args.m,
+                    "observed": observed,
+                    "sensitivity": {
+                        "loss_increase": observed["cross_entropy"] - baseline["cross_entropy"],
+                        "top1_drop_percent": baseline["top1_percent"] - observed["top1_percent"],
+                        "top5_drop_percent": baseline["top5_percent"] - observed["top5_percent"],
+                    },
+                }
+            )
+            print(
+                f"[{index}/{len(layers)}] {module.get_name()} {n}:{args.m} "
+                f"top1={observed['top1_percent']:.3f}% "
+                f"drop={baseline['top1_percent'] - observed['top1_percent']:.3f} pp"
+            )
+            current_layer = {
+                "name": module.get_name(),
+                "type": "conv2d" if isinstance(module, SparseConv) else "linear",
+                "dense_parameters": module.weight.numel(),
+                "candidates": rows,
+            }
+            remaining_layers = [
+                layer for layer in profile_layers if layer["name"] != module.get_name()
+            ]
+            profile["layers"] = remaining_layers + [current_layer]
+            profile["progress"] = {
+                "status": "incomplete",
+                "completed_candidates": sum(
+                    len(layer["candidates"]) for layer in profile["layers"]
+                ),
+                "last_layer": module.get_name(),
+                "last_candidate": [n, args.m],
+                "updated_utc": datetime.now(timezone.utc).isoformat(),
+            }
+            output.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(partial_output, profile)
+        module.apply_N_M(base_n, base_m)
+        profile_layers.append(
+            {
+                "name": module.get_name(),
+                "type": "conv2d" if isinstance(module, SparseConv) else "linear",
+                "dense_parameters": module.weight.numel(),
+                "candidates": rows,
+            }
+        )
+
+    profile["layers"] = profile_layers
+    profile["progress"] = {
+        "status": "complete",
+        "completed_candidates": sum(len(layer["candidates"]) for layer in profile_layers),
+        "completed_utc": datetime.now(timezone.utc).isoformat(),
     }
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(profile, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    atomic_write_json(output, profile)
+    if partial_output.exists():
+        partial_output.unlink()
     print(f"Sensitivity profile: {output}")
 
 

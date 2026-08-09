@@ -26,6 +26,50 @@ def file_sha256(path: str | Path) -> str:
     return digest.hexdigest()
 
 
+def partial_profile_path(output: str | Path) -> Path:
+    return Path(str(Path(output)) + ".partial.json")
+
+
+def atomic_write_json(path: str | Path, value: dict[str, Any]) -> None:
+    """Write JSON through a sibling temporary file to survive interruption."""
+
+    destination = Path(path)
+    temporary = Path(str(destination) + ".tmp")
+    temporary.write_text(
+        json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    temporary.replace(destination)
+
+
+def resume_identity(profile: dict[str, Any]) -> dict[str, Any]:
+    """Fields that must remain identical before partial measurements are reused."""
+
+    return {
+        "schema_version": profile["schema_version"],
+        "method": profile["method"],
+        "model": profile["model"],
+        "dataset": profile["dataset"],
+        "seed": profile["measurement"]["seed"],
+        "base_scheme_file": profile["base_scheme_file"],
+        "base_scheme": profile["base_scheme"],
+        "candidate_n": profile["candidate_n"],
+        "m": profile["m"],
+    }
+
+
+def load_partial_profile(path: str | Path, expected: dict[str, Any]) -> dict[str, Any]:
+    source = Path(path)
+    partial = json.loads(source.read_text(encoding="utf-8"))
+    if partial.get("progress", {}).get("status") != "incomplete":
+        raise ValueError(f"Resume profile is not marked incomplete: {source}")
+    if resume_identity(partial) != resume_identity(expected):
+        raise ValueError(
+            "Partial sensitivity profile does not match the current checkpoint, "
+            "scheme, dataset, candidates, or seed."
+        )
+    return partial
+
+
 def _finite(value: Any, label: str) -> float:
     try:
         number = float(value)

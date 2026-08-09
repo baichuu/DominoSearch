@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import platform
-import statistics
 import subprocess
 import sys
 import time
@@ -35,6 +34,7 @@ from hardware_cost import (  # noqa: E402
     fit_cost_predictor,
     validate_weights,
 )
+from hardware_measurement import summarize_samples  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -52,6 +52,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup", type=int, default=30)
     parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--repeats", type=int, default=7)
+    parser.add_argument("--bootstrap-resamples", type=int, default=2_000)
+    parser.add_argument(
+        "--latency-cost-statistic",
+        choices=("median", "ci95-high"),
+        default="median",
+        help="Latency statistic stored as latency_ms and consumed by cost selection.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--ridge", type=float, default=1e-3)
     parser.add_argument("--latency-weight", type=float, default=1.0)
@@ -108,12 +115,6 @@ def git_value(*arguments: str) -> str | None:
     return completed.stdout.strip()
 
 
-def percentile(values: list[float], fraction: float) -> float:
-    ordered = sorted(values)
-    index = min(len(ordered) - 1, max(0, int(round((len(ordered) - 1) * fraction))))
-    return ordered[index]
-
-
 def benchmark_module(
     module: torch.nn.Module,
     sample: torch.Tensor,
@@ -121,14 +122,17 @@ def benchmark_module(
     warmup: int,
     iterations: int,
     repeats: int,
-) -> dict[str, float]:
+    bootstrap_resamples: int,
+    seed: int,
+) -> dict[str, Any]:
     with torch.inference_mode():
         for _ in range(warmup):
             module(sample)
         if device.type == "cuda":
             torch.cuda.synchronize(device)
 
-        per_operation_ms = []
+        device_block_mean_ms = []
+        wall_block_mean_ms = []
         peak_bytes = []
         for _ in range(repeats):
             if device.type == "cuda":
@@ -137,24 +141,39 @@ def benchmark_module(
                 baseline = torch.cuda.memory_allocated(device)
                 start = torch.cuda.Event(enable_timing=True)
                 end = torch.cuda.Event(enable_timing=True)
+                wall_started = time.perf_counter_ns()
                 start.record()
                 for _ in range(iterations):
                     module(sample)
                 end.record()
                 torch.cuda.synchronize(device)
+                wall_elapsed_ms = (time.perf_counter_ns() - wall_started) / 1_000_000.0
                 elapsed_ms = start.elapsed_time(end)
                 peak_bytes.append(max(0, torch.cuda.max_memory_allocated(device) - baseline))
             else:
-                started = time.perf_counter()
+                started = time.perf_counter_ns()
                 for _ in range(iterations):
                     module(sample)
-                elapsed_ms = (time.perf_counter() - started) * 1000.0
+                elapsed_ms = (time.perf_counter_ns() - started) / 1_000_000.0
+                wall_elapsed_ms = elapsed_ms
                 peak_bytes.append(0)
-            per_operation_ms.append(elapsed_ms / iterations)
+            device_block_mean_ms.append(elapsed_ms / iterations)
+            wall_block_mean_ms.append(wall_elapsed_ms / iterations)
     return {
-        "latency_ms": statistics.median(per_operation_ms),
-        "latency_p95_ms": percentile(per_operation_ms, 0.95),
+        "device": summarize_samples(
+            device_block_mean_ms,
+            bootstrap_resamples=bootstrap_resamples,
+            seed=seed,
+        ),
+        "wall": summarize_samples(
+            wall_block_mean_ms,
+            bootstrap_resamples=bootstrap_resamples,
+            seed=seed + repeats,
+        ),
+        "raw_device_block_mean_ms": device_block_mean_ms,
+        "raw_wall_block_mean_ms": wall_block_mean_ms,
         "peak_temporary_bytes": max(peak_bytes),
+        "raw_peak_temporary_bytes": peak_bytes,
     }
 
 
@@ -201,7 +220,12 @@ def main() -> None:
         raise ValueError("--candidate-n must include dense N=M.")
     if args.batch_size <= 0 or args.input_size <= 0:
         raise ValueError("Batch size and input size must be positive.")
-    if args.warmup < 0 or args.iterations <= 0 or args.repeats <= 0:
+    if (
+        args.warmup < 0
+        or args.iterations <= 0
+        or args.repeats <= 0
+        or args.bootstrap_resamples <= 0
+    ):
         raise ValueError("Warmup cannot be negative; iterations/repeats must be positive.")
     weights = validate_weights(
         {
@@ -211,10 +235,16 @@ def main() -> None:
             "memory_bytes": args.memory_weight,
         }
     )
-    if weights["energy_mj"] > 0.0:
+    unsupported_weights = {
+        metric: weights[metric]
+        for metric in ("energy_mj", "bandwidth_bytes", "memory_bytes")
+        if weights[metric] > 0.0
+    }
+    if unsupported_weights:
         raise ValueError(
-            "This profiler does not claim layer energy measurements. Keep --energy-weight 0 "
-            "until a synchronized board power sensor is integrated."
+            "This profiler only measures latency. Energy, DRAM bandwidth, and system memory "
+            "require synchronized board telemetry or external instruments; keep their weights "
+            f"at zero. Unsupported positive weights: {unsupported_weights}."
         )
 
     torch.manual_seed(args.seed)
@@ -262,7 +292,6 @@ def main() -> None:
         layer_input = capture["input"]
         input_shape = capture["input_shape"]
         output_shape = capture["output_shape"]
-        element_bytes = module.weight.element_size()
         if module.weight.numel() % args.m:
             raise ValueError(f"Layer {name} weight count is not divisible by M={args.m}.")
         if isinstance(module, SparseConv):
@@ -309,37 +338,54 @@ def main() -> None:
                 args.warmup,
                 args.iterations,
                 args.repeats,
+                args.bootstrap_resamples,
+                args.seed + layer_index * 1_000 + n,
             )
-            density = n / args.m
-            bias_elements = 0 if module.bias is None else module.bias.numel()
-            effective_weight_elements = round(module.weight.numel() * density)
-            bandwidth_bytes = (
-                layer_input.numel()
-                + int(torch.tensor(output_shape).prod().item())
-                + effective_weight_elements
-                + bias_elements
-            ) * element_bytes
-            memory_bytes = (effective_weight_elements + bias_elements) * element_bytes
+            latency_summary = measured["device"]
+            latency_ms = latency_summary[
+                "median" if args.latency_cost_statistic == "median" else "ci95_high"
+            ]
             candidate_rows.append(
                 {
                     "n": n,
                     "m": args.m,
-                    "density": density,
+                    "density": n / args.m,
                     "metrics": {
-                        "latency_ms": measured["latency_ms"],
+                        "latency_ms": latency_ms,
                         "energy_mj": None,
-                        "bandwidth_bytes": bandwidth_bytes,
-                        "memory_bytes": memory_bytes,
+                        "bandwidth_bytes": None,
+                        "memory_bytes": None,
                     },
                     "diagnostics": {
-                        "latency_p95_ms": measured["latency_p95_ms"],
+                        "latency_source": (
+                            "cuda-event-block-mean"
+                            if device.type == "cuda"
+                            else "monotonic-wall-clock-block-mean"
+                        ),
+                        "latency_cost_statistic": args.latency_cost_statistic,
+                        "device_latency_ms": measured["device"],
+                        "wall_latency_ms": measured["wall"],
+                        "raw_device_block_mean_ms": measured[
+                            "raw_device_block_mean_ms"
+                        ],
+                        "raw_wall_block_mean_ms": measured[
+                            "raw_wall_block_mean_ms"
+                        ],
                         "peak_temporary_bytes": measured["peak_temporary_bytes"],
+                        "raw_peak_temporary_bytes": measured[
+                            "raw_peak_temporary_bytes"
+                        ],
+                        "peak_temporary_bytes_provenance": (
+                            "PyTorch CUDA allocator delta; diagnostic only, not system memory"
+                        ),
                     },
                 }
             )
             print(
                 f"[{layer_index}/{len(sparse_modules)}] {name} {n}:{args.m} "
-                f"median={measured['latency_ms']:.6f} ms"
+                f"median={latency_summary['median']:.6f} ms "
+                f"ci95=[{latency_summary['ci95_low']:.6f}, "
+                f"{latency_summary['ci95_high']:.6f}]"
             )
         layers.append(
             {
@@ -373,11 +419,22 @@ def main() -> None:
             "warmup": args.warmup,
             "iterations": args.iterations,
             "repeats": args.repeats,
+            "bootstrap_resamples": args.bootstrap_resamples,
             "seed": args.seed,
-            "latency": "median of repeated synchronized per-operation block means",
+            "latency": {
+                "cost_statistic": args.latency_cost_statistic,
+                "device": (
+                    "CUDA event synchronized block means"
+                    if device.type == "cuda"
+                    else "monotonic wall-clock block means"
+                ),
+                "cross_check": "synchronized monotonic wall-clock block means",
+                "raw_samples": "per-repeat block means; each block contains iterations operations",
+                "confidence_interval": "deterministic percentile bootstrap of the median",
+            },
             "energy": "not measured",
-            "bandwidth": "estimated input + output + effective weights + bias bytes",
-            "memory": "estimated effective weights + bias bytes",
+            "bandwidth": "not measured; theoretical tensor sizes remain in layer features only",
+            "memory": "not measured; PyTorch allocator peak is diagnostic only",
         },
         "cost_definition": {
             "formula": "sum(weight[metric] * layer_metric / total_dense_metric)",

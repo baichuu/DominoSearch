@@ -19,14 +19,17 @@ Trong đó:
 
 - `L_i`: latency layer đo trên thiết bị;
 - `E_i`: energy của layer, chỉ được dùng khi có power sensor đồng bộ;
-- `B_i`: byte input, output, effective weight và bias ước lượng;
-- `W_i`: byte effective weight và bias;
+- `B_i`: DRAM traffic đo bằng hardware counter phù hợp;
+- `W_i`: peak system memory đo trên thiết bị;
 - mẫu số là tổng giá trị dense của toàn bộ sparse layer;
 - `α + β + γ + δ = 1` và mọi trọng số không âm.
 
 Chuẩn hóa theo tổng dense giúp cộng các đại lượng khác đơn vị mà không để độ lớn
-số học của byte lấn át millisecond. Với profile T4 hiện tại, mặc định dùng
-`α=1`, các trọng số khác bằng 0. Energy không được suy đoán từ TDP.
+số học của byte lấn át millisecond. Profiler PyTorch hiện chỉ đo trực tiếp
+latency nên bắt buộc dùng `α=1`, các trọng số khác bằng 0. Energy không được suy
+đoán từ TDP; bandwidth và memory không được suy ra từ tensor shape rồi gọi là số
+đo phần cứng. Các feature lý thuyết vẫn mô tả layer nhưng không đi vào measured
+cost.
 
 ## 2. Hai nguồn cost
 
@@ -55,6 +58,8 @@ python search/profile_layer_hardware.py \
   --m 16 --candidate-n 1 2 4 8 16 \
   --layout NHWC --input-size 224 --batch-size 1 \
   --device cuda --warmup 30 --iterations 100 --repeats 7 \
+  --bootstrap-resamples 2000 \
+  --latency-cost-statistic ci95-high \
   --latency-weight 1 \
   --energy-weight 0 --bandwidth-weight 0 --memory-weight 0 \
   --seed 42 \
@@ -62,7 +67,14 @@ python search/profile_layer_hardware.py \
 ```
 
 Script từ chối overwrite profile, kiểm tra checkpoint exact, ghi branch/commit,
-phiên bản PyTorch/CUDA, tên GPU, protocol đo và toàn bộ shape layer.
+phiên bản PyTorch/CUDA, tên GPU, protocol đo và toàn bộ shape layer. Mỗi candidate
+lưu raw per-repeat block mean của CUDA Events và synchronized wall clock, median,
+P95, standard deviation và bootstrap CI95%. `ci95-high` là lựa chọn bảo thủ khi
+dùng latency làm cost; `median` dùng cho run đối chứng.
+
+`energy_mj`, `bandwidth_bytes` và `memory_bytes` của profiler này là `null`.
+Profiler fail nếu weight tương ứng khác 0. Chỉ collector Jetson tích hợp power
+sensor, hardware counter và system-memory telemetry mới được điền các metric đó.
 
 > Latency này phản ánh implementation PyTorch hiện có: tạo mask rồi gọi dense
 > operator. Nó không đại diện cho FPGA hoặc sparse accelerator khác. Muốn tối ưu
@@ -97,8 +109,10 @@ Search manifest lưu SHA-256 của profile, thiết bị, cost weights, predicto
 validation, scheme và reduction đạt được. Profile phải khớp chính xác toàn bộ
 sparse layer và đủ các ứng viên `1/2/4/8/16:16` khi dùng lookup.
 
-Có thể tái sử dụng cùng số đo nhưng đổi objective bằng cách truyền đủ bốn trọng
-số. Ví dụ ưu tiên latency 20%, bandwidth 40% và memory weight 40%:
+Chỉ có thể tái sử dụng cùng số đo và đổi objective khi profile chứa số đo thật
+cho mọi metric có weight dương. Ví dụ dưới đây chỉ hợp lệ với profile Jetson đã
+tích hợp bandwidth và memory collector, không hợp lệ với profiler PyTorch hiện
+tại:
 
 ```bash
 --hardware-latency-weight 0.20 \
