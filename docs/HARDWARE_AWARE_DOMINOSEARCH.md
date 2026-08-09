@@ -134,8 +134,8 @@ python search/select_scheme_from_hardware_profile.py \
   --hardware-profile /path/to/t4-resnet18-nm-profile.json \
   --output /path/to/schemes/hardware-profile-target3.txt \
   --target-reduction 0.03 --loss-metric parameters \
-  --latency-weight 0.20 --energy-weight 0.00 \
-  --bandwidth-weight 0.40 --memory-weight 0.40
+  --latency-weight 1.00 --energy-weight 0.00 \
+  --bandwidth-weight 0.00 --memory-weight 0.00
 ```
 
 Selector giải bài toán multiple-choice Pareto: đạt cost reduction yêu cầu với

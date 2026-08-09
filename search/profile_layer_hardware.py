@@ -28,7 +28,6 @@ if str(REPO_ROOT) not in sys.path:
 import models  # noqa: E402
 from devkit.sparse_ops import SparseConv, SparseLinear  # noqa: E402
 from hardware_cost import (  # noqa: E402
-    DEFAULT_WEIGHTS,
     SCHEMA_VERSION,
     file_sha256,
     fit_cost_predictor,
@@ -177,7 +176,7 @@ def benchmark_module(
     }
 
 
-def dense_macs(module: torch.nn.Module, input_shape: tuple[int, ...], output_shape: tuple[int, ...]) -> int:
+def dense_macs(module: torch.nn.Module, output_shape: tuple[int, ...]) -> int:
     if isinstance(module, SparseConv):
         kernel_h, kernel_w = module.kernel_size
         output_elements = int(torch.tensor(output_shape).prod().item())
@@ -308,7 +307,7 @@ def main() -> None:
                 "padding": list(module.padding),
                 "dilation": list(module.dilation),
                 "dense_parameters": module.weight.numel(),
-                "dense_macs": dense_macs(module, input_shape, output_shape),
+                "dense_macs": dense_macs(module, output_shape),
             }
             layer_type = "conv2d"
         else:
@@ -324,7 +323,7 @@ def main() -> None:
                 "padding": [0, 0],
                 "dilation": [1, 1],
                 "dense_parameters": module.weight.numel(),
-                "dense_macs": dense_macs(module, input_shape, output_shape),
+                "dense_macs": dense_macs(module, output_shape),
             }
             layer_type = "linear"
 

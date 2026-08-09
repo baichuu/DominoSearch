@@ -14,14 +14,6 @@ import numpy as np
 
 SCHEMA_VERSION = 1
 METRICS = ("latency_ms", "energy_mj", "bandwidth_bytes", "memory_bytes")
-DEFAULT_WEIGHTS = {
-    "latency_ms": 1.0,
-    "energy_mj": 0.0,
-    "bandwidth_bytes": 0.0,
-    "memory_bytes": 0.0,
-}
-
-
 def _finite_nonnegative(value: Any, label: str) -> float:
     try:
         number = float(value)
