@@ -2,15 +2,22 @@
 
 ## Project objective
 
-The primary objective of this repository is to research and compare methods for
-optimizing neural-network models through **pruning** so they can run on
-resource-constrained hardware such as CPUs, embedded boards, and FPGAs.
+The active objective of this repository is to optimize DominoSearch
+**layer-wise mixed N:M pruning** so a selected model can be evaluated and later
+deployed on resource-constrained hardware, currently targeting Jetson Nano.
 
-Pruning is the main scope. Do not add quantization, distillation, architecture
-replacement, or hardware-specific deployment as part of a pruning experiment
-unless the user explicitly requests it. Those techniques may be proposed as
-future work, but their effects must not be mixed into pruning-only benchmark
-results.
+Mixed N:M pruning is the only active pruning direction. Uniform N:M, structured
+channel/filter pruning, and unstructured magnitude pruning are frozen historical
+baselines: preserve their code, branches, artifacts, and reports, but do not add
+new implementation or experiments for them unless the user explicitly reopens a
+direction. Do not combine their masks or checkpoints with mixed N:M results.
+
+Do not add quantization, distillation, architecture replacement, or another
+model-compression method unless the user explicitly requests a separate combined
+experiment. Hardware profiling, packed N:M representation, runtime integration,
+and kernel work are allowed when they are needed to measure or deploy the same
+mixed N:M model, but their effects must be reported separately from pruning-only
+accuracy and theoretical-complexity results.
 
 ## Read before changing code
 
@@ -26,17 +33,21 @@ on the original algorithm or experimental protocol.
 
 ## Branch responsibilities
 
-Keep each experiment isolated in its assigned branch:
+Only one experiment branch is active:
 
 - `master`: shared, stable code, documentation, and benchmark infrastructure.
-- `pruning-uniform-nm`: one uniform N:M configuration across sparse layers.
-- `pruning-domino-mixed-nm`: DominoSearch mixed N:M selected per layer.
-- `pruning-structured-channel`: structured channel or filter pruning.
-- `pruning-unstructured-magnitude`: local/global magnitude pruning baseline.
+- `pruning-domino-mixed-nm`: all active DominoSearch layer-wise mixed N:M,
+  conditioned sensitivity, measured hardware cost, search, fine-tuning, and
+  deployment-evaluation work.
 
-Do not implement one branch's pruning method in another branch. Shared fixes or
-benchmark improvements should be committed to `master` first and then merged or
-fast-forwarded into all experiment branches before experiment-specific work.
+The branches `pruning-uniform-nm`, `pruning-structured-channel`, and
+`pruning-unstructured-magnitude` are frozen historical baselines. Do not modify,
+run new experiments on, or synchronize them unless the user explicitly reopens
+that direction. Their existing results may be used as read-only comparison data.
+
+Shared fixes or benchmark improvements must be committed to `master` first and
+then merged into `pruning-domino-mixed-nm` before experiment-specific work. Do
+not synchronize frozen branches by default.
 
 ## Mandatory agent self-check
 
@@ -59,15 +70,13 @@ Then verify the current branch against this table:
 | Current branch | Work that is allowed |
 | --- | --- |
 | `master` | Shared benchmark, compatibility fixes, documentation, and infrastructure only |
-| `pruning-uniform-nm` | Uniform N:M pruning only |
-| `pruning-domino-mixed-nm` | Per-layer mixed N:M and DominoSearch cost/search improvements only |
-| `pruning-structured-channel` | Structured channel/filter pruning only |
-| `pruning-unstructured-magnitude` | Local/global magnitude pruning only |
+| `pruning-domino-mixed-nm` | Per-layer mixed N:M, sensitivity, measured cost, search, fine-tuning, and deployment evaluation |
+| Any frozen pruning branch | Read-only inspection only unless the user explicitly reopens it |
 
 Before continuing, the agent must be able to answer all of these questions with
 `yes`:
 
-- Am I on the branch assigned to this pruning method?
+- Am I on `pruning-domino-mixed-nm` for experiment work, or `master` for a shared change?
 - Is the requested work inside that branch's allowed scope?
 - Have I read the relevant documentation and implementation?
 - Is the worktree clean, or have I identified and preserved every existing user
@@ -89,8 +98,9 @@ Before changing a file, confirm:
 - which test or benchmark will detect an incorrect implementation.
 
 If a change is useful to more than one pruning branch, implement and commit it on
-`master` first. Synchronize the experiment branches before continuing. Do not
-copy slightly different versions of shared benchmark code into each branch.
+`master` first. Synchronize only `pruning-domino-mixed-nm` before continuing. Do
+not copy a branch-specific version of shared benchmark code, and do not update
+frozen branches by default.
 
 ### 3. Experiment validity check
 
@@ -121,7 +131,7 @@ git diff --stat
 
 Review the full diff and verify:
 
-- only the current branch's pruning direction is implemented;
+- only mixed N:M or shared infrastructure is implemented;
 - no checkpoint, dataset, cache, log, or generated result is staged;
 - original dense behavior still works;
 - documentation and CLI help match the implementation;
@@ -159,8 +169,8 @@ ready for evaluation, not that it has already improved the model.
 
 ## Experimental fairness
 
-Every pruning direction must start from the same dense baseline and must use the
-same conditions when results are compared:
+Every mixed N:M stage and every retained historical baseline must use the same
+dense baseline and conditions when results are compared:
 
 - model architecture and dense checkpoint;
 - training and validation dataset/split;
@@ -236,7 +246,6 @@ selecting a model from sparsity alone.
 
 - Update documentation when adding a CLI flag, result field, pruning rule, or
   experiment protocol.
-- Keep commits focused on one pruning direction or one shared infrastructure
-  change.
+- Keep commits focused on mixed N:M or one shared infrastructure change.
 - Include the branch name and experiment purpose in result notes or reports.
 - Leave unrelated user changes untouched.
