@@ -470,6 +470,51 @@ results/domino-staged-mac20-epoch1-full-after-20260812.json
 runs/domino-staged-mac20-lr001-3epoch-train50k-20260812/model.pth-{1,2,3}
 ```
 
+### 11.2. Kết quả stage MAC23
+
+Conditioned profile tiếp theo bắt đầu từ MAC20 epoch 1, không quay lại checkpoint
+dense hoặc MAC18. Profile 5.000 ảnh có baseline 71,400% Top-1 và selector chọn
+thêm ba thay đổi:
+
+```text
+SparseConv10_128-256-(3, 3): 4:4 -> 3:4
+SparseConv14_256-256-(3, 3): 3:4 -> 2:4
+SparseConv15_256-512-(3, 3): 4:4 -> 3:4
+```
+
+Scheme đạt 23,190% giảm effective MAC, 24,747% giảm effective parameter và
+estimated additive sensitivity 0,56 điểm Top-1. Full validation trước
+fine-tune đạt 68,892% Top-1 và 88,682% Top-5, vượt gate 68,75%.
+
+Fine-tune dùng cùng protocol ba epoch của MAC20. Screen 5.000 ảnh chọn epoch 1:
+
+| Epoch | Top-1 5k | Top-5 5k | SHA-256 |
+| --- | ---: | ---: | --- |
+| 1 | **71,120%** | 89,640% | `e860b43630de8296b32fc6a3633592361a6c2451a33313d6aabced00e80763ac` |
+| 2 | 70,920% | 89,540% | `67545e3dd7c67267e47c905860a2b3538d268a1d76e6549c5cffeec5b880ed79` |
+| 3 | 70,800% | **89,760%** | `c92e3e94cd6e1fa5b970601726647b6b797317ae5384e283e22fea915bd42ba2` |
+
+Full validation epoch 1 đạt 69,458% Top-1 và 88,994% Top-5. Nó thấp hơn dense
+0,296 điểm Top-1 và thấp hơn MAC20 0,202 điểm, nhưng giảm thêm khoảng 3,186 điểm
+phần trăm MAC so với MAC20. Vì vậy MAC20 và MAC23 đều là Pareto points:
+
+- MAC20 ưu tiên accuracy: 69,660% Top-1, giảm 20,003% MAC;
+- MAC23 ưu tiên complexity: 69,458% Top-1, giảm 23,190% MAC.
+
+Masked-dense median T4 của MAC23 là 21,043 ms và không chứng minh sparse
+speedup. Việc chọn một trong hai để deploy phải dựa trên lookup/kernel và
+end-to-end measurement trên Jetson Nano.
+
+Artifact MAC23 trên Drive:
+
+```text
+profiles/resnet18-m4-conditioned-mac20-5k-20260812.json
+schemes/domino-staged-mac23-from-mac20-5k-20260812.txt[.json]
+results/domino-staged-mac23-from-mac20-full-before-20260812.json
+results/domino-staged-mac23-epoch1-full-after-20260812.json
+runs/domino-staged-mac23-lr001-3epoch-train50k-20260812/model.pth-{1,2,3}
+```
+
 ## 12. Nguồn tham khảo
 
 - DominoSearch: `assets/DominoSearch.pdf`, đặc biệt mục tiêu complexity có thể là
