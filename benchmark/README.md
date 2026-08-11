@@ -96,6 +96,11 @@ không chồng lặp giữa rank/worker. Mỗi worker dừng đúng quota của 
 DataLoader và số iteration của scheduler vẫn khớp khi chạy smoke test nhiều
 worker.
 
+Fine-tune từ một subset shard đã copy vào SSD local phải khai báo chính xác số
+shard bằng `train_imagenet.py --train-expected-shards NUMBER`. Mặc định vẫn yêu
+cầu đủ 294 train shard và 14 validation shard. Tổng row của subset phải đủ
+`--train-num-samples`; không tạo shard rỗng để vượt qua kiểm tra manifest.
+
 Đọc từ mounted Drive tiện và bền qua lần reset runtime nhưng có thể chậm hơn disk
 local. Thời gian đọc dữ liệu là một phần của accuracy evaluation, không được trộn
 vào latency synthetic của model.

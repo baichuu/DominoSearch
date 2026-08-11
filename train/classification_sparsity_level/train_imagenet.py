@@ -93,6 +93,18 @@ parser.add_argument('--data-root', default='', help='ImageFolder root containing
 parser.add_argument('--parquet-root', default='', help='root containing ImageNet Parquet shards')
 parser.add_argument('--train-parquet-pattern', default='data/train-*.parquet')
 parser.add_argument('--val-parquet-pattern', default='data/validation-*.parquet')
+parser.add_argument(
+    '--train-expected-shards',
+    type=int,
+    default=294,
+    help='exact number of local train Parquet shards; lower only for an explicitly staged subset',
+)
+parser.add_argument(
+    '--val-expected-shards',
+    type=int,
+    default=14,
+    help='exact number of local validation Parquet shards',
+)
 parser.add_argument('--train-num-samples', type=int, default=1281167)
 parser.add_argument('--val-num-samples', type=int, default=50000)
 parser.add_argument('--shuffle-buffer', type=int, default=10000)
@@ -297,6 +309,7 @@ def main():
             shuffle_buffer=args.shuffle_buffer,
             rank=rank,
             world_size=world_size,
+            expected_shards=args.train_expected_shards,
         )
         val_dataset = ParquetImageNetDataset(
             args.parquet_root,
@@ -309,6 +322,7 @@ def main():
             shuffle_buffer=1,
             rank=rank,
             world_size=world_size,
+            expected_shards=args.val_expected_shards,
         )
 
 
