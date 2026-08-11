@@ -410,7 +410,67 @@ giảm resource nhiều hơn MAC18. Nếu không đạt, MAC18 vẫn là model �
 Chỉ benchmark trực tiếp trên Jetson mới cho phép kết luận speedup, memory hoặc
 energy thực tế. Kết quả effective MAC trên T4 không thay thế bước này.
 
-## 11. Nguồn tham khảo
+## 11. Kết quả MAC20 ngày 2026-08-12
+
+Conditioned profile được chạy từ exact MAC18 epoch-1 checkpoint trên 5.000 ảnh:
+
+- baseline Top-1/Top-5: 71,560%/89,860%;
+- đủ 21 layer và 51 candidate monotonic;
+- checkpoint SHA-256
+  `3f4a81f0f0eec1a1f4c3ce2d16b4b2884f02d01730ea449d95c5785932058ca0`;
+- checkpoint load exact, không có missing/unexpected key;
+- đủ 14 validation shard, tổng 6.693.093.726 byte.
+
+Selector target MAC 20% chỉ chuyển thêm hai layer từ 4:4 sang 3:4:
+
+```text
+SparseConv12_128-256-(1, 1)
+SparseConv16_512-512-(3, 3)
+```
+
+Scheme đạt 20,003% giảm effective MAC, 20,332% giảm effective parameter và
+estimated additive sensitivity 0,32 điểm Top-1. T4 hardware lookup cũ chỉ cung
+cấp shape/MAC cho selector; measured masked-dense latency không được dùng làm
+speedup objective.
+
+### 11.1. Full validation trước và sau fine-tune
+
+| Run | Top-1 | Top-5 | Giảm parameter | Giảm MAC | Median T4 | P95 T4 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| MAC20 trước fine-tune | 69,534% | 89,096% | 20,332% | 20,003% | 20,566 ms | 21,495 ms |
+| MAC20 epoch 1 sau fine-tune | **69,660%** | **89,130%** | **20,332%** | **20,003%** | 19,948 ms | 21,510 ms |
+
+Fine-tune dùng LR 0,001, ba epoch, 50.000 train sample/epoch, validation nội bộ
+1.000 ảnh và seed 42. Mười hai train shard local chứa 52.296 row; loader được
+gọi với `--train-expected-shards 12` và dừng đúng quota 50.000. Cả ba checkpoint
+được screen trên cùng 5.000 ảnh:
+
+| Epoch | Top-1 5k | Top-5 5k | SHA-256 |
+| --- | ---: | ---: | --- |
+| 1 | **71,400%** | 89,780% | `ef982b4c1f85ddaf452528587cd1d5deae56452b0588ae502d56a8af652a070b` |
+| 2 | 71,340% | **89,960%** | `c902517f295c997dc5b3c20fc56a448c2f3ecb3bf960fbd67a81c942f4553032` |
+| 3 | 71,260% | 89,600% | `442a9a99e8d7ff6688e11798502b1a9c0f2686d0ec47f965df069ce084fc41c9` |
+
+Epoch 1 được chọn theo Top-1 đã định trước. Full Top-1 69,660% vượt gate
+69,45%, chỉ thấp hơn dense 0,094 điểm và gần ngang MAC18 epoch 1 (chênh 0,006
+điểm, không đủ để tuyên bố accuracy cao hơn). MAC20 giảm thêm khoảng 1,681 điểm
+phần trăm MAC so với MAC18 nên hiện là điểm accuracy–complexity được chọn.
+
+Latency T4 vẫn chậm hơn dense vì runtime tạo mask rồi gọi dense operator. Kết
+quả này chỉ chứng minh accuracy và effective complexity, chưa chứng minh target
+hardware improvement.
+
+Artifact chính trên Drive:
+
+```text
+profiles/resnet18-m4-conditioned-mac18-5k-20260812.json
+schemes/domino-staged-mac20-from-mac18-5k-20260812.txt[.json]
+results/domino-staged-mac20-from-mac18-full-before-20260812.json
+results/domino-staged-mac20-epoch1-full-after-20260812.json
+runs/domino-staged-mac20-lr001-3epoch-train50k-20260812/model.pth-{1,2,3}
+```
+
+## 12. Nguồn tham khảo
 
 - DominoSearch: `assets/DominoSearch.pdf`, đặc biệt mục tiêu complexity có thể là
   model size, FLOPs, latency hoặc energy và phần layer-wise penalty;
